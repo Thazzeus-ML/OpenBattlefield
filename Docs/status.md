@@ -43,6 +43,6 @@ with the build log, and the fixes should be a single PR that updates this table.
 ## Known limitations of the baseline
 
 * Dense chunks: 1 byte per voxel regardless of content.
-* Journal grows without bound until compaction exists.
+* Journal compaction (`CompactJournal`) is manual; there is no automatic checkpoint policy yet.
 * Whole-chunk remesh on any change; border sampling in `BuildMeshInput` is per voxel.
 * The procedural foundation is a heightfield; caves only arise from modifications.

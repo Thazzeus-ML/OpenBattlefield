@@ -28,3 +28,7 @@ All notable changes to this project are documented here. The format follows
 * Unreal plugin shell: `.uplugin`, `OpenBattlefieldCore` and `OBTerrain` modules with a terrain world
   subsystem and a reference terrain actor (not yet compiled in-engine, see `Docs/status.md`).
 * Documentation set under `Docs/`, contribution framework, issue and PR templates.
+* `TerrainWorld::CompactJournal(keepLast)` and `JournalBase()`: drop old journal entries so a world
+  is reconstructed from a checkpoint snapshot plus the journal suffix. Version, last sequence, state
+  hash and duplicate detection are preserved. Snapshot and journal schema 2 (schema 1 still loads);
+  new `ResultCode::JournalCompacted`; benchmark E reports compaction time and sizes (#5).

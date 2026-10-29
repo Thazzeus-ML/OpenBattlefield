@@ -59,6 +59,10 @@ id not among the last 4096 accepted ids else `DuplicateOperation`.
 
 * A journal replays onto a fresh world with the same `WorldConfig` and reproduces the state hash
   (`TestReplay.cpp`, benchmark E).
+* After `CompactJournal`, the journal starts at `JournalBase()` and only replays onto the snapshot
+  taken at that version: `DeserializeJournal` refuses a compacted journal with `JournalCompacted`
+  unless the caller asks for its base. Snapshot and journal schema 2 carry the base; schema 1 files
+  still load as uncompacted history.
 * `generationVersion` is part of `WorldConfig`; a journal saved against one foundation cannot be
   mistakenly replayed on another because the config is hashed and serialized with it.
 * `schemaVersion` on each operation allows a future reader to migrate old operations explicitly.
