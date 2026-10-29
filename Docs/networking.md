@@ -27,9 +27,10 @@ A client eventually receives:
 
 Measured in benchmark E with 500 operations: journal 28 KB versus snapshot 2.7 MB. Event replication
 is cheaper by two orders of magnitude for a fresh world, but a long-lived world's journal grows
-without bound while the snapshot is bounded by the modified area. The crossover point and the
-compaction policy (snapshot + journal suffix) are open research questions; the data needed to study
-them comes from the stress workload.
+without bound while the snapshot is bounded by the modified area. `TerrainWorld::CompactJournal`
+drops old entries so that state = snapshot(checkpoint) + journal suffix (benchmark E reports the
+compacted sizes). The crossover point and the checkpoint policy are open research questions; the
+data needed to study them comes from the stress workload.
 
 ## Reliability and ordering
 
@@ -40,9 +41,9 @@ The core already provides the primitives:
 | Duplicate messages | `operationId` window → `DuplicateOperation`; same sequence → `StaleSequence` |
 | Out-of-order delivery | `sequenceNumber` must increase; the transport must buffer and reorder before applying |
 | Lost unreliable events | detected by sequence gaps vs. the server's advertised `LastSequence`; recovered by requesting the missing range or a chunk snapshot |
-| Reconnection / late join | `SerializeSnapshot` (bounded) or config + journal (unbounded) |
+| Reconnection / late join | `SerializeSnapshot` (bounded), config + full journal (unbounded), or a checkpoint snapshot + journal suffix |
 | Missing chunk versions | per-chunk version in `ChunkMeshInput`/`Chunk`; client requests a chunk snapshot when its version lags |
-| Server restart | snapshot restores journal, sequence state, duplicate window |
+| Server restart | snapshot restores the journal (or its suffix after compaction), sequence state, duplicate window |
 | Schema migration | `schemaVersion` per operation, per config, per chunk, per snapshot |
 
 A retransmitted command is never applied twice: the id window and sequence check are exactly the
