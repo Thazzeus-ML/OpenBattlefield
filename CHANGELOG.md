@@ -9,6 +9,10 @@ All notable changes to this project are documented here. The format follows
 
 * The project is described as game agnostic throughout: no genre, setting or game mode is assumed
   (README, plugin description, roadmap, module plans).
+* `TerrainWorld::BuildMeshInput` copies the border from loaded neighbour chunks and generates it per
+  column (one `SurfaceHeight` per column) for unloaded ones, instead of calling `SampleMaterial` per
+  border voxel. Output bytes are unchanged; dirty-chunk flush is about 2-3x faster in
+  `isolated_crater` and `boundary_crater` (#4).
 
 ### Added
 
