@@ -1,6 +1,8 @@
 // Copyright OpenBattlefield contributors. Licensed under the Apache License, Version 2.0.
 #include "OpenBattlefieldCore/ObChunkMesher.h"
 
+#include <algorithm>
+
 namespace ob
 {
 
@@ -217,6 +219,128 @@ void EmitChunkMesh(const ChunkFaces& faces, MeshData& out)
                 out.indices.push_back(base + 2);
                 out.indices.push_back(base + 3);
             }
+}
+
+size_t EmitGreedyChunkMesh(const ChunkFaces& faces, MeshData& out)
+{
+    out.Clear();
+    const size_t n = faces.size;
+    if (n == 0 || n > 256 || faces.rowStart.size() != n * n + 1)
+        return 0;
+
+    // Faces of direction f lie in slices across axis a = f / 2 and are merged over the other two axes,
+    // u (the lower) and v. Bucket the faces by (direction, slice) with a counting sort, so the merge
+    // only visits slices that hold faces, and only their bounding rectangle.
+    struct Cell
+    {
+        uint8_t u, v, material;
+    };
+    const auto axes = [](int f, int& a, int& u, int& v)
+    {
+        a = f / 2;
+        u = a == 0 ? 1 : 0;
+        v = a == 2 ? 1 : 2;
+    };
+    std::vector<uint32_t> bucketStart(6 * n + 1, 0);
+    for (size_t row = 0; row < n * n; ++row)
+        for (uint32_t i = faces.rowStart[row]; i < faces.rowStart[row + 1]; ++i)
+        {
+            const MeshFace& mf = faces.faces[i];
+            const size_t c[3] = {mf.x, row % n, row / n};
+            ++bucketStart[mf.face * n + c[mf.face / 2] + 1];
+        }
+    for (size_t b = 0; b < 6 * n; ++b)
+        bucketStart[b + 1] += bucketStart[b];
+    std::vector<Cell> cells(faces.faces.size());
+    std::vector<uint32_t> fill(bucketStart.begin(), bucketStart.end() - 1);
+    for (size_t row = 0; row < n * n; ++row)
+        for (uint32_t i = faces.rowStart[row]; i < faces.rowStart[row + 1]; ++i)
+        {
+            const MeshFace& mf = faces.faces[i];
+            const size_t c[3] = {mf.x, row % n, row / n};
+            int a, u, v;
+            axes(mf.face, a, u, v);
+            cells[fill[mf.face * n + c[a]]++] =
+                Cell{static_cast<uint8_t>(c[u]), static_cast<uint8_t>(c[v]), mf.material};
+        }
+
+    // Per slice: mark each face as material + 1 in an n * n mask, then repeatedly take the first marked
+    // cell in (v, u) order, grow it along u, then along v while whole lines match, emit and clear. A
+    // merged quad's corners are the face table's corners with each 0/1 along u and v stretched to the
+    // quad's extent, which keeps the winding.
+    std::vector<uint8_t> mask(n * n, 0);
+    size_t quads = 0;
+    for (uint8_t f = 0; f < 6; ++f)
+    {
+        const FaceDef& d = kFaces[f];
+        int a, u, v;
+        axes(f, a, u, v);
+        for (size_t s = 0; s < n; ++s)
+        {
+            const uint32_t b0 = bucketStart[f * n + s], b1 = bucketStart[f * n + s + 1];
+            if (b0 == b1)
+                continue;
+            size_t u0 = n, u1 = 0, v0 = n, v1 = 0;
+            for (uint32_t k = b0; k < b1; ++k)
+            {
+                const Cell& c = cells[k];
+                mask[c.u + n * c.v] = static_cast<uint8_t>(c.material + 1);
+                u0 = std::min<size_t>(u0, c.u);
+                u1 = std::max<size_t>(u1, c.u);
+                v0 = std::min<size_t>(v0, c.v);
+                v1 = std::max<size_t>(v1, c.v);
+            }
+            for (size_t j = v0; j <= v1; ++j)
+                for (size_t i = u0; i <= u1;)
+                {
+                    const uint8_t m = mask[i + n * j];
+                    if (m == 0)
+                    {
+                        ++i;
+                        continue;
+                    }
+                    size_t w = 1;
+                    while (i + w <= u1 && mask[i + w + n * j] == m)
+                        ++w;
+                    size_t h = 1;
+                    for (; j + h <= v1; ++h)
+                    {
+                        const uint8_t* line = &mask[i + n * (j + h)];
+                        if (std::any_of(line, line + w, [m](uint8_t c) { return c != m; }))
+                            break;
+                    }
+                    for (size_t k = 0; k < h; ++k)
+                        std::fill_n(&mask[i + n * (j + k)], w, uint8_t(0));
+
+                    float origin[3], extent[3];
+                    origin[a] = static_cast<float>(s);
+                    extent[a] = 1.0f;
+                    origin[u] = static_cast<float>(i);
+                    extent[u] = static_cast<float>(w);
+                    origin[v] = static_cast<float>(j);
+                    extent[v] = static_cast<float>(h);
+                    const uint32_t base = static_cast<uint32_t>(out.VertexCount());
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        for (int axis = 0; axis < 3; ++axis)
+                            out.positions.push_back(origin[axis] + d.corners[c][axis] * extent[axis]);
+                        out.normals.push_back(static_cast<float>(d.dx));
+                        out.normals.push_back(static_cast<float>(d.dy));
+                        out.normals.push_back(static_cast<float>(d.dz));
+                        out.vertexMaterial.push_back(static_cast<uint8_t>(m - 1));
+                    }
+                    out.indices.push_back(base + 0);
+                    out.indices.push_back(base + 1);
+                    out.indices.push_back(base + 2);
+                    out.indices.push_back(base + 0);
+                    out.indices.push_back(base + 2);
+                    out.indices.push_back(base + 3);
+                    ++quads;
+                    i += w;
+                }
+        }
+    }
+    return quads;
 }
 
 } // namespace ob

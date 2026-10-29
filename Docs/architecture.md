@@ -36,7 +36,7 @@ Applications / Reference Game        (future: sample projects built on the plugi
 | Versioning | `Chunk::Version`, `TerrainWorld::Version` | Content versions for publication checks |
 | Serialization | `ByteWriter`, `ByteReader`, snapshot and journal formats | Canonical little-endian, bounds checked, no exceptions |
 | Hashing | `Hasher`, `ComputeStateHash` | FNV-1a over canonical bytes, canonical chunk order |
-| Derived data | `ChunkMeshInput`, `BuildChunkMesh` | Immutable padded snapshot, face-culled CPU mesh |
+| Derived data | `ChunkMeshInput`, `BuildChunkMesh`, `EmitGreedyChunkMesh` | Immutable padded snapshot, face-culled CPU mesh, greedy mesh |
 | Instrumentation | `WorldStats`, `InstrumentationSink` | Counters and an event hook |
 | Errors | `ResultCode`, `ToString` | Every fallible call returns a code |
 

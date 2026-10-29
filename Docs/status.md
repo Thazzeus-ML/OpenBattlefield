@@ -46,5 +46,7 @@ true because core coordinates map directly onto Unreal's left-handed axes, mirro
 * Journal compaction (`CompactJournal`) is manual; there is no automatic checkpoint policy yet.
 * Remeshing rescans only the dirty region (`UpdateChunkFaces`), but every remesh still builds a full
   `ChunkMeshInput` snapshot and re-emits the whole chunk's `MeshData`; `AOBTerrainActor` still
-  rebuilds whole chunks with `BuildChunkMesh`.
+  rebuilds whole chunks (greedy by default, `BuildChunkMesh` with `bGreedyMeshing` off).
+* Greedy meshes have T-junctions. No cracks were visible in the UE 5.8 host at 25 cm, but nothing
+  closes them if they appear (for example at finer voxels or with MSAA off).
 * The procedural foundation is a heightfield; caves only arise from modifications.

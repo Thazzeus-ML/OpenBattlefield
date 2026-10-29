@@ -193,7 +193,16 @@ bool AOBTerrainActor::RebuildChunk(const FIntVector& C)
         return false;
     }
     ob::MeshData MeshData;
-    ob::BuildChunkMesh(Input, MeshData);
+    if (bGreedyMeshing)
+    {
+        ob::ChunkFaces Faces;
+        ob::BuildChunkFaces(Input, Faces);
+        ob::EmitGreedyChunkMesh(Faces, MeshData);
+    }
+    else
+    {
+        ob::BuildChunkMesh(Input, MeshData);
+    }
 
     FOBMeshBuffers Buffers;
     OBConvertChunkMesh(MeshData, Subsystem->GetVoxelSizeCm(), bFlipWinding, Buffers);

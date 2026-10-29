@@ -42,6 +42,10 @@ All notable changes to this project are documented here. The format follows
   new `ResultCode::JournalCompacted`; benchmark E reports compaction time and sizes (#5).
 * Benchmark G, `resolution`: one physical scene at voxel sizes 25 cm / 2^k (generation, meshing,
   apply and flush time; voxel, face and mesh memory per level). Roadmap goal: resolution.
+* Greedy meshing: `EmitGreedyChunkMesh` merges coplanar faces of one direction and material from a
+  chunk's `ChunkFaces` into maximal rectangles, covering exactly the reference mesher's surface.
+  `AOBTerrainActor::bGreedyMeshing` (default true) uses it. In the `resolution` sweep at 3.125 cm it
+  cuts 841 k faces to 80 k quads and mesh memory from 104 MB to 9.9 MB, emitted in 21 ms.
 * Uniform chunks: a chunk whose voxels all hold one material is stored without a voxel array
   (`Chunk::IsUniform`, `UniformMaterial`, `Compact`); `Data()` is `nullptr` while uniform. Content,
   state hashes and serialized bytes are unchanged. Voxel memory in the `resolution` sweep drops from
