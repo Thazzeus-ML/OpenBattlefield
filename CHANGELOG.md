@@ -5,6 +5,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+* The project is described as game agnostic throughout: no genre, setting or game mode is assumed
+  (README, plugin description, roadmap, module plans).
+
 ### Added
 
 * Engine-agnostic simulation core (`OpenBattlefieldCore`): integer coordinates with floor division

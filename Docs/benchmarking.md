@@ -22,11 +22,12 @@ python3 Tools/bench_compare.py baseline.json results.json --threshold 0.10
 | A | `generation` | Generates a `region`² x 4 block of chunks from the seed | loaded-chunk hash stable across iterations |
 | B | `isolated_crater` | One subtraction inside one chunk, then rebuilds dirty chunks | exactly one chunk; oracle match |
 | C | `boundary_crater` | One subtraction centred on a corner shared by 8 chunks | 8 chunks modified; identical voxels on a world with a different chunk size |
-| D | `artillery` | `ops` overlapping craters/rubble in a ±`region` voxel area, mesh flush every 16 ops | hash stable across iterations; no rejections |
+| D | `artillery` | `ops` overlapping impacts (craters and rubble) in a ±`region` voxel area, mesh flush every 16 ops | hash stable across iterations; no rejections |
 | E | `reconstruction` | Builds D's world, then journal round trip + replay, snapshot round trip, and full compaction (`compact_ns`, compacted journal/snapshot bytes) | replay hash match; snapshot hash match; compacted snapshot hash match |
 | F | `stress` | `ops` operations with periodic memory samples, mesh flush every 32 ops | replay hash match; journal complete; no rejections |
 
-The artillery sequence is derived from `Mix64` so every run with the same parameters applies the
+The `artillery` operation sequence (named for its pattern of repeated impacts, not a setting) is
+derived from `Mix64` so every run with the same parameters applies the
 same operations.
 
 ## Metrics

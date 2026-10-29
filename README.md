@@ -1,11 +1,12 @@
 # OpenBattlefield
 
-**An open-source, experimental battlefield simulation framework for Unreal Engine 5, built as a
-reusable plugin around an engine-independent, deterministic simulation core.**
+**An open-source, experimental framework for large-scale destructible-world simulation in Unreal
+Engine 5, built as a reusable plugin around an engine-independent, deterministic simulation core.**
 
-The long-term target is a large-scale, WWII-inspired capture-the-flag battlefield with 200+
-combatants, persistent craters, trenches, construction and structural destruction. The framework is
-game agnostic: what is being built first are the reusable systems that make such a game possible.
+The framework is game agnostic. It assumes no genre, setting or game mode: it provides reusable
+systems (deterministic terrain, persistent deformation, construction, structural destruction,
+replication) for any game or simulation that needs a large, shared world that hundreds of
+participants can change.
 
 Research hypothesis guiding the work:
 
