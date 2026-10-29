@@ -18,8 +18,10 @@
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+// clang-format off
+#include <windows.h> // must precede psapi.h, which is not self-contained
 #include <psapi.h>
-#include <windows.h>
+// clang-format on
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <sys/resource.h>
