@@ -593,8 +593,9 @@ WorkloadResult RunReconstruction(const Params& p)
     Series& build = r.AddSeries("initial_build_ns");
     Series& journalReplay = r.AddSeries("journal_replay_ns");
     Series& snapshotLoad = r.AddSeries("snapshot_load_ns");
-    bool replayMatch = true, snapshotMatch = true, journalRoundTrip = true;
-    uint64_t journalBytes = 0, snapshotBytes = 0;
+    Series& compact = r.AddSeries("compact_ns");
+    bool replayMatch = true, snapshotMatch = true, journalRoundTrip = true, compactedMatch = true;
+    uint64_t journalBytes = 0, snapshotBytes = 0, compactedJournalBytes = 0, compactedSnapshotBytes = 0;
     StateHash hash = 0;
     for (uint32_t it = 0; it < p.warmup + p.iterations; ++it)
     {
@@ -635,13 +636,34 @@ WorkloadResult RunReconstruction(const Params& p)
             snapshotLoad.samplesNs.push_back(static_cast<double>(ts.ElapsedNs()));
         snapshotMatch = snapshotMatch && Succeeded(code) && loaded && loaded->ComputeStateHash() == hash &&
                         loaded->ComputeJournalHash() == live.ComputeJournalHash();
+
+        // Compaction path: drop the whole journal so the modified chunks are the checkpoint, then
+        // round trip the compacted snapshot.
+        ScopedTimer tc;
+        live.CompactJournal(0);
+        if (measured)
+            compact.samplesNs.push_back(static_cast<double>(tc.ElapsedNs()));
+        ByteWriter cw;
+        live.SerializeSnapshot(cw);
+        compactedSnapshotBytes = cw.Size();
+        ByteWriter cjw;
+        live.SerializeJournal(cjw);
+        compactedJournalBytes = cjw.Size();
+        std::unique_ptr<TerrainWorld> checkpoint;
+        ByteReader cr(cw.Buffer());
+        compactedMatch = compactedMatch && Succeeded(TerrainWorld::DeserializeSnapshot(cr, checkpoint)) &&
+                         checkpoint && checkpoint->ComputeStateHash() == hash &&
+                         checkpoint->Version() == live.Version();
     }
     r.checks["journal_round_trip"] = journalRoundTrip;
     r.checks["replay_hash_match"] = replayMatch;
     r.checks["snapshot_hash_match"] = snapshotMatch;
+    r.checks["compacted_snapshot_hash_match"] = compactedMatch;
     r.integers["operations"] = ops.size();
     r.integers["journal_bytes"] = journalBytes;
     r.integers["snapshot_bytes"] = snapshotBytes;
+    r.integers["compacted_journal_bytes"] = compactedJournalBytes;
+    r.integers["compacted_snapshot_bytes"] = compactedSnapshotBytes;
     r.hashes["state_hash"] = hash;
     return r;
 }

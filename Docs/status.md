@@ -42,7 +42,7 @@ with the build log, and the fixes should be a single PR that updates this table.
 ## Known limitations of the baseline
 
 * Dense chunks: 1 byte per voxel regardless of content.
-* Journal grows without bound until compaction exists.
+* Journal compaction (`CompactJournal`) is manual; there is no automatic checkpoint policy yet.
 * Remeshing rescans only the dirty region (`UpdateChunkFaces`), but every remesh still builds a full
   `ChunkMeshInput` snapshot and re-emits the whole chunk's `MeshData`; `AOBTerrainActor` still
   rebuilds whole chunks with `BuildChunkMesh`.

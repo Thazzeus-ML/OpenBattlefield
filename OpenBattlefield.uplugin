@@ -3,7 +3,7 @@
   "Version": 1,
   "VersionName": "0.1.0",
   "FriendlyName": "OpenBattlefield",
-  "Description": "Open-source battlefield simulation framework: deterministic, versioned, destructible terrain core with thin Unreal Engine integration.",
+  "Description": "Open-source, game-agnostic framework for large-scale destructible-world simulation: deterministic, versioned, destructible terrain core with thin Unreal Engine integration.",
   "Category": "Simulation",
   "CreatedBy": "OpenBattlefield contributors",
   "CreatedByURL": "https://github.com/Thazzeus-ML/OpenBattlefield",

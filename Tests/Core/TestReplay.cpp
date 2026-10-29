@@ -49,6 +49,48 @@ std::vector<TerrainOperation> Artillery(const WorldConfig& cfg, size_t count, ui
     }
     return ops;
 }
+
+// Renumbers ops to follow a world's last accepted operation, with fresh ids.
+std::vector<TerrainOperation> After(std::vector<TerrainOperation> ops, SequenceNumber lastSequence,
+                                    OperationId firstId)
+{
+    for (size_t i = 0; i < ops.size(); ++i)
+    {
+        ops[i].sequenceNumber = lastSequence + 1 + i;
+        ops[i].operationId = firstId + i;
+    }
+    return ops;
+}
+
+// Cheap accepted operations that change nothing (a small subtraction high in the air), for exercising
+// the duplicate-detection window without paying for terrain changes.
+std::vector<TerrainOperation> AirOps(const WorldConfig& cfg, size_t count)
+{
+    std::vector<TerrainOperation> ops;
+    for (size_t i = 0; i < count; ++i)
+    {
+        TerrainOperation op;
+        op.operationId = 50000 + i;
+        op.sequenceNumber = i + 1;
+        op.worldId = cfg.worldId;
+        op.type = OperationType::SubtractSphere;
+        op.center = VoxelCoord(0, 0, 40);
+        op.radius = 1;
+        ops.push_back(op);
+    }
+    return ops;
+}
+
+std::unique_ptr<TerrainWorld> RoundTrip(const TerrainWorld& world)
+{
+    ByteWriter w;
+    world.SerializeSnapshot(w);
+    std::unique_ptr<TerrainWorld> loaded;
+    ByteReader r(w.Buffer());
+    if (Failed(TerrainWorld::DeserializeSnapshot(r, loaded)) || !r.AtEnd())
+        loaded.reset();
+    return loaded;
+}
 } // namespace
 
 OB_TEST(ReplayFromSeedAndJournalReproducesStateHash)
@@ -256,6 +298,221 @@ OB_TEST(JournalSerializationRoundTripsAndRebuilds)
     TerrainWorld rebuilt(loadedCfg);
     OB_REQUIRE(Succeeded(rebuilt.ReplayJournal(loadedOps)));
     OB_CHECK_EQ(rebuilt.ComputeStateHash(), live.ComputeStateHash());
+}
+
+OB_TEST(CompactedWorldMatchesUncompactedTwin)
+{
+    const WorldConfig cfg = Cfg();
+    const std::vector<TerrainOperation> ops = Artillery(cfg, 300, 7);
+    TerrainWorld twin(cfg);
+    TerrainWorld live(cfg);
+    OB_REQUIRE(Succeeded(twin.ReplayJournal(ops)));
+    OB_REQUIRE(Succeeded(live.ReplayJournal(ops)));
+
+    OB_CHECK_EQ(live.CompactJournal(400), size_t(0)); // nothing to drop
+    OB_CHECK_EQ(live.CompactJournal(50), size_t(250));
+    OB_CHECK_EQ(live.JournalBase(), WorldVersion(250));
+    OB_CHECK_EQ(live.Journal().size(), size_t(50));
+    OB_CHECK(live.Journal().front().operationId == ops[250].operationId);
+    OB_CHECK_EQ(live.Version(), twin.Version());
+    OB_CHECK_EQ(live.LastSequence(), twin.LastSequence());
+    OB_CHECK_EQ(live.ComputeStateHash(), twin.ComputeStateHash());
+    OB_CHECK(live.ComputeJournalHash() != twin.ComputeJournalHash()); // a different history record
+    OB_CHECK(live.EstimateMemoryBytes() < twin.EstimateMemoryBytes());
+
+    // Serialize, deserialize: the compacted state survives, including duplicate detection for
+    // operations that are no longer in the journal.
+    std::unique_ptr<TerrainWorld> loaded = RoundTrip(live);
+    OB_REQUIRE(loaded != nullptr);
+    OB_CHECK_EQ(loaded->JournalBase(), WorldVersion(250));
+    OB_CHECK_EQ(loaded->Version(), twin.Version());
+    OB_CHECK_EQ(loaded->LastSequence(), twin.LastSequence());
+    OB_CHECK_EQ(loaded->ComputeStateHash(), twin.ComputeStateHash());
+    OB_CHECK_EQ(loaded->ComputeJournalHash(), live.ComputeJournalHash());
+    TerrainOperation reused = ops[10];
+    reused.sequenceNumber = twin.LastSequence() + 1;
+    OB_CHECK_EQ(twin.ApplyOperation(reused).code, ResultCode::DuplicateOperation);
+    OB_CHECK_EQ(loaded->ApplyOperation(reused).code, ResultCode::DuplicateOperation);
+    OB_CHECK_EQ(live.ApplyOperation(reused).code, ResultCode::DuplicateOperation);
+
+    // Further operations keep the worlds in lockstep, and compacting to nothing still round trips.
+    const std::vector<TerrainOperation> more = After(Artillery(cfg, 100, 8), twin.LastSequence(), 700000);
+    OB_REQUIRE(Succeeded(twin.ReplayJournal(more)));
+    OB_REQUIRE(Succeeded(loaded->ReplayJournal(more)));
+    OB_CHECK_EQ(loaded->ComputeStateHash(), twin.ComputeStateHash());
+    OB_CHECK_EQ(loaded->Version(), twin.Version());
+    OB_CHECK_EQ(loaded->CompactJournal(0), size_t(150));
+    OB_CHECK_EQ(loaded->JournalBase(), loaded->Version());
+    std::unique_ptr<TerrainWorld> empty = RoundTrip(*loaded);
+    OB_REQUIRE(empty != nullptr);
+    OB_CHECK(empty->Journal().empty());
+    OB_CHECK_EQ(empty->ComputeStateHash(), twin.ComputeStateHash());
+    reused.sequenceNumber = twin.LastSequence() + 1;
+    OB_CHECK_EQ(empty->ApplyOperation(reused).code, ResultCode::DuplicateOperation);
+}
+
+OB_TEST(CheckpointSnapshotPlusJournalSuffixReconstructsState)
+{
+    const WorldConfig cfg = Cfg();
+    TerrainWorld live(cfg);
+    OB_REQUIRE(Succeeded(live.ReplayJournal(Artillery(cfg, 150, 9))));
+    live.CompactJournal(0);
+    ByteWriter checkpoint;
+    live.SerializeSnapshot(checkpoint);
+
+    const std::vector<TerrainOperation> suffix = After(Artillery(cfg, 80, 10), live.LastSequence(), 800000);
+    OB_REQUIRE(Succeeded(live.ReplayJournal(suffix)));
+    OB_CHECK_EQ(live.Journal().size(), suffix.size());
+
+    // The journal alone no longer rebuilds the world from the foundation, and says so.
+    ByteWriter jw;
+    live.SerializeJournal(jw);
+    WorldConfig jcfg;
+    std::vector<TerrainOperation> jops;
+    {
+        ByteReader jr(jw.Buffer());
+        OB_CHECK_EQ(TerrainWorld::DeserializeJournal(jr, jcfg, jops), ResultCode::JournalCompacted);
+    }
+    WorldVersion base = 0;
+    ByteReader jr(jw.Buffer());
+    OB_REQUIRE(Succeeded(TerrainWorld::DeserializeJournal(jr, jcfg, jops, &base)));
+    OB_CHECK_EQ(base, WorldVersion(150));
+    OB_CHECK_EQ(jops.size(), suffix.size());
+
+    // Checkpoint + suffix does.
+    std::unique_ptr<TerrainWorld> restored;
+    ByteReader cr(checkpoint.Buffer());
+    OB_REQUIRE(Succeeded(TerrainWorld::DeserializeSnapshot(cr, restored)));
+    OB_CHECK_EQ(restored->Version(), base);
+    OB_REQUIRE(Succeeded(restored->ReplayJournal(jops)));
+    OB_CHECK_EQ(restored->ComputeStateHash(), live.ComputeStateHash());
+    OB_CHECK_EQ(restored->ComputeJournalHash(), live.ComputeJournalHash());
+    OB_CHECK_EQ(restored->Version(), live.Version());
+}
+
+OB_TEST(CompactionKeepsDuplicateWindowBeyondTheJournal)
+{
+    // More operations than the duplicate window: ids that left the window are accepted again, ids
+    // still in it are rejected whether or not they are still in the journal.
+    const WorldConfig cfg = Cfg();
+    const size_t total = TerrainWorld::kRecentOperationWindow + 200;
+    const std::vector<TerrainOperation> ops = AirOps(cfg, total);
+    TerrainWorld twin(cfg);
+    TerrainWorld live(cfg);
+    OB_REQUIRE(Succeeded(twin.ReplayJournal(ops)));
+    OB_REQUIRE(Succeeded(live.ReplayJournal(ops)));
+    live.CompactJournal(100);
+    std::unique_ptr<TerrainWorld> loaded = RoundTrip(live);
+    OB_REQUIRE(loaded != nullptr);
+
+    TerrainWorld* worlds[] = {&twin, &live, loaded.get()};
+    const size_t probes[] = {0, 150, total - 150, total - 50}; // evicted, evicted, dropped, in journal
+    const ResultCode expected[] = {ResultCode::Ok, ResultCode::Ok, ResultCode::DuplicateOperation,
+                                   ResultCode::DuplicateOperation};
+    for (TerrainWorld* w : worlds)
+        for (size_t i = 0; i < 4; ++i)
+        {
+            TerrainOperation op = ops[probes[i]];
+            op.sequenceNumber = w->LastSequence() + 1;
+            OB_CHECK_EQ(w->ApplyOperation(op).code, expected[i]);
+        }
+    OB_CHECK_EQ(loaded->ComputeStateHash(), twin.ComputeStateHash());
+    OB_CHECK_EQ(loaded->Version(), twin.Version());
+}
+
+OB_TEST(SchemaOneSnapshotsAndJournalsStillLoad)
+{
+    const WorldConfig cfg = Cfg();
+    TerrainWorld live(cfg);
+    OB_REQUIRE(Succeeded(live.ReplayJournal(Artillery(cfg, 40, 11))));
+    ByteWriter cfgBytes;
+    cfg.Serialize(cfgBytes);
+    ByteWriter opBytes;
+    live.Journal()[0].Serialize(opBytes);
+
+    // A schema 1 snapshot is the schema 2 layout without the journal base and pre-journal window ids
+    // (8 + 4 bytes after the operations, all zero for an uncompacted world).
+    ByteWriter w;
+    live.SerializeSnapshot(w);
+    std::vector<uint8_t> v1 = w.Buffer();
+    const size_t afterOps = 4 + 2 + cfgBytes.Size() + 8 + 8 + 4 + live.Journal().size() * opBytes.Size();
+    for (size_t i = 0; i < 12; ++i)
+        OB_REQUIRE(v1[afterOps + i] == 0);
+    v1.erase(v1.begin() + static_cast<std::ptrdiff_t>(afterOps),
+             v1.begin() + static_cast<std::ptrdiff_t>(afterOps + 12));
+    v1[4] = 1;
+    v1[5] = 0;
+    std::unique_ptr<TerrainWorld> loaded;
+    ByteReader r(v1);
+    OB_REQUIRE(Succeeded(TerrainWorld::DeserializeSnapshot(r, loaded)));
+    OB_CHECK(r.AtEnd());
+    OB_CHECK_EQ(loaded->ComputeStateHash(), live.ComputeStateHash());
+    OB_CHECK_EQ(loaded->ComputeJournalHash(), live.ComputeJournalHash());
+    OB_CHECK_EQ(loaded->JournalBase(), WorldVersion(0));
+    TerrainOperation reused = live.Journal()[3];
+    reused.sequenceNumber = live.LastSequence() + 1;
+    OB_CHECK_EQ(loaded->ApplyOperation(reused).code, ResultCode::DuplicateOperation);
+
+    // A schema 1 journal has no base field after the config.
+    ByteWriter jw;
+    live.SerializeJournal(jw);
+    std::vector<uint8_t> j1 = jw.Buffer();
+    const size_t baseAt = 4 + 2 + cfgBytes.Size();
+    j1.erase(j1.begin() + static_cast<std::ptrdiff_t>(baseAt),
+             j1.begin() + static_cast<std::ptrdiff_t>(baseAt + 8));
+    j1[4] = 1;
+    j1[5] = 0;
+    WorldConfig jcfg;
+    std::vector<TerrainOperation> jops;
+    ByteReader jr(j1);
+    OB_REQUIRE(Succeeded(TerrainWorld::DeserializeJournal(jr, jcfg, jops)));
+    TerrainWorld rebuilt(jcfg);
+    OB_REQUIRE(Succeeded(rebuilt.ReplayJournal(jops)));
+    OB_CHECK_EQ(rebuilt.ComputeStateHash(), live.ComputeStateHash());
+}
+
+OB_TEST(CompactedSnapshotWithInconsistentBaseIsRejected)
+{
+    const WorldConfig cfg = Cfg();
+    TerrainWorld live(cfg);
+    OB_REQUIRE(Succeeded(live.ReplayJournal(Artillery(cfg, 30, 12))));
+    live.CompactJournal(10);
+    ByteWriter w;
+    live.SerializeSnapshot(w);
+    ByteWriter cfgBytes;
+    cfg.Serialize(cfgBytes);
+    ByteWriter opBytes;
+    live.Journal()[0].Serialize(opBytes);
+    const size_t journalAt = 4 + 2 + cfgBytes.Size() + 8 + 8 + 4;
+    const size_t baseAt = journalAt + 10 * opBytes.Size();
+    OB_REQUIRE(w.Buffer()[baseAt] == 20);
+    OB_REQUIRE(w.Buffer()[baseAt + 8] == 20); // 20 window ids predate the journal
+
+    std::unique_ptr<TerrainWorld> out;
+    for (uint8_t base : {uint8_t(19), uint8_t(21)}) // version no longer equals base + journal
+    {
+        std::vector<uint8_t> bad = w.Buffer();
+        bad[baseAt] = base;
+        ByteReader r(bad);
+        OB_CHECK_EQ(TerrainWorld::DeserializeSnapshot(r, out), ResultCode::SerializationCorrupt);
+    }
+    {
+        // More pre-journal window ids than dropped operations.
+        std::vector<uint8_t> bad = w.Buffer();
+        bad[baseAt + 8] = 21;
+        ByteReader r(bad);
+        OB_CHECK_EQ(TerrainWorld::DeserializeSnapshot(r, out), ResultCode::SerializationCorrupt);
+    }
+    {
+        // A pre-journal id repeated in the journal (the first journal operation's id).
+        std::vector<uint8_t> bad = w.Buffer();
+        for (size_t i = 0; i < 8; ++i)
+            bad[baseAt + 12 + i] = w.Buffer()[journalAt + i];
+        ByteReader r(bad);
+        OB_CHECK_EQ(TerrainWorld::DeserializeSnapshot(r, out), ResultCode::SerializationCorrupt);
+    }
+    ByteReader good(w.Buffer());
+    OB_CHECK_EQ(TerrainWorld::DeserializeSnapshot(good, out), ResultCode::Ok);
 }
 
 OB_TEST_MAIN()

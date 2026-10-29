@@ -59,6 +59,8 @@ const char* ToString(ResultCode code)
         return "WorldNotInitialized";
     case ResultCode::ReplayDiverged:
         return "ReplayDiverged";
+    case ResultCode::JournalCompacted:
+        return "JournalCompacted";
     }
     return "UnknownResultCode";
 }
