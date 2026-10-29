@@ -149,6 +149,7 @@ enum class ResultCode : uint16_t
     // World / replay
     WorldNotInitialized = 500,
     ReplayDiverged = 501,
+    JournalCompacted = 502,
 };
 
 OBCORE_API const char* ToString(ResultCode code);

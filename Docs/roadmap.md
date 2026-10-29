@@ -34,7 +34,8 @@ Built and run on UE 5.8.2 (Windows), see `status.md`:
 
 * Dirty-region-limited remeshing, greedy meshing, border cache for `BuildMeshInput`.
 * Off-game-thread remeshing with version-checked publication (`OBScheduling` seed).
-* Target: artillery flush cost scales with changed voxels, not with chunk count. Measured against
+* Target: flush cost in the `artillery` workload (repeated overlapping impacts) scales with changed
+  voxels, not with chunk count. Measured against
   the Milestone 0 baseline on the same machine.
 
 ## Milestone 3 — Persistence and replication
@@ -48,12 +49,13 @@ Built and run on UE 5.8.2 (Windows), see `status.md`:
 * Sparse chunk storage, density/SDF layer for smooth surfaces, per-representation benchmarks with
   identical workloads and shared correctness criteria.
 
-## Milestone 5 — Combined arms scale
+## Milestone 5 — Large-session scale
 
-* 256-client load generator with realistic movement/combat/construction/destruction traffic.
+* 256-client load generator with realistic movement, interaction, construction and destruction
+  traffic.
 * Server tick percentiles under that load. Idle connections do not count.
 
 ## Non-goals for now
 
 Forking the engine, a custom task scheduler before measurements justify it, shader modules without
-working shaders, and building the full game before the reusable systems exist.
+working shaders, and building a specific game before the reusable systems exist.
