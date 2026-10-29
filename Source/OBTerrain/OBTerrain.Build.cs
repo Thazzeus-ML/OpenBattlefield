@@ -2,8 +2,7 @@
 //
 // OBTerrain: Unreal runtime integration of the OpenBattlefield terrain core.
 //
-// STATUS: not yet compiled against an Unreal Engine installation by the project maintainers.
-// See Docs/status.md.
+// STATUS: built and run on UE 5.8.2 (Windows). See Docs/status.md.
 
 using UnrealBuildTool;
 

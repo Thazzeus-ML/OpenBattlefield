@@ -1,11 +1,15 @@
 // Copyright OpenBattlefield contributors. Licensed under the Apache License, Version 2.0.
 //
-// STATUS: not yet compiled against Unreal Engine. See Docs/status.md.
+// STATUS: built and run on UE 5.8.2 (Windows). See Docs/status.md.
 #pragma once
 
 #include "CoreMinimal.h"
-#include "OBTerrainTypes.generated.h"
+
 #include "OpenBattlefieldCore/OpenBattlefieldCore.h"
+
+// UHT requires the generated header to be the last include (kept in its own block so
+// clang-format does not sort it).
+#include "OBTerrainTypes.generated.h"
 
 /**
  * Editor-facing description of a terrain world. Converted to ob::WorldConfig by ToCoreConfig().

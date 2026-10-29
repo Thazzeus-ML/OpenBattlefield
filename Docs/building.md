@@ -25,7 +25,7 @@ Options: `OB_BUILD_TESTS`, `OB_BUILD_BENCHMARKS`, `OB_WARNINGS_AS_ERRORS` (defau
 
 Run a single test binary with a name filter: `./build/release/Tests/Core/TestWorld Boundary`.
 
-## As an Unreal Engine plugin (unverified, see status.md)
+## As an Unreal Engine plugin (verified on UE 5.8.2 / Windows, see status.md)
 
 1. Clone the repository into `YourProject/Plugins/OpenBattlefield` (the repository root is the
    plugin root; `OpenBattlefield.uplugin` must sit directly under `Plugins/OpenBattlefield/`).

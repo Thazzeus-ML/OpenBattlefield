@@ -6,9 +6,7 @@
 // (see Docs/shared-source.md). They contain no Unreal types. The only Unreal-aware file is
 // Private/OpenBattlefieldCoreModule.cpp, which is enabled by the OBCORE_UE_BUILD definition below.
 //
-// STATUS: this module has not yet been compiled against an Unreal Engine installation by the
-// project maintainers (no engine was available in the initial development environment). See
-// Docs/status.md before relying on it.
+// STATUS: built and run on UE 5.8.2 (Windows). See Docs/status.md.
 
 using UnrealBuildTool;
 

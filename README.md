@@ -22,7 +22,7 @@ That is a hypothesis to be tested with reproducible benchmarks, not a claim.
 | `Source/OpenBattlefieldCore` — deterministic terrain core (coordinates, chunks, procedural foundation, validated operations, journal, versions, dirty regions, serialization, hashing, mesher) | **Implemented and verified** standalone: 50 tests, sanitizers, GCC/Clang/C++17/C++20, identical state hashes across compilers |
 | `Benchmarks/` — harness with six workloads, JSON output, comparison tool | **Implemented**; sample measurements in `Docs/benchmarking.md` |
 | `.github/workflows/core-ci.yml` — Linux/macOS/Windows matrix | **Implemented** |
-| `Source/OBTerrain` + `OpenBattlefield.uplugin` — Unreal integration (world subsystem, terrain actor with ProceduralMesh render + collision) | **Written, not yet compiled in an engine** (no engine was available where this was built). See `Docs/status.md`. |
+| `Source/OBTerrain` + `OpenBattlefield.uplugin` — Unreal integration (world subsystem, terrain actor with ProceduralMesh render + collision) | **Built and run on UE 5.8.2** (Windows; editor and Shipping targets, terrain and craters with matching collision). Other engine versions and platforms untested. See `Docs/status.md`. |
 | Destruction, construction, networking, physics, rendering, scheduling, persistence modules | **Documented boundaries only** (`Docs/future-modules.md`) |
 
 ## Quick start (no Unreal required)
@@ -37,8 +37,8 @@ ctest --preset release
 ```
 
 As an Unreal plugin: clone into `YourProject/Plugins/OpenBattlefield`, enable it, place an
-`AOBTerrainActor` in a level and call `ApplyCrater`. Please file an "Engine build report" issue with
-the result; this path is unverified.
+`AOBTerrainActor` in a level and call `ApplyCrater`. Verified on UE 5.8.2 / Windows; please file an
+"Engine build report" issue for other engine versions or platforms.
 
 ## Design in one paragraph
 

@@ -14,23 +14,23 @@ Honest record of what has and has not been verified. Update this file in every P
 
 The MSVC preset builds with `/W4` but without `/WX` because MSVC warning output could not be checked where this was authored; making it warning-clean under `/WX` is an open task.
 
-## Written but NOT compiled against Unreal Engine
+## Verified in Unreal Engine (UE 5.8.2, Windows 11, VS 2022, 2026-10-29)
 
-No Unreal Engine installation was available in the environment where this foundation was built. The
-following files were written against the UE 5.4 API from documentation and experience, reviewed, but
-never built or run:
+Built as `Plugins/OpenBattlefield` in a minimal C++ host project and run in a packaged-style
+`-game` session. Not yet repeated on 5.4–5.7, Linux or macOS.
 
-* `OpenBattlefield.uplugin`
-* `Source/OpenBattlefieldCore/OpenBattlefieldCore.Build.cs`
-* `Source/OpenBattlefieldCore/Private/OpenBattlefieldCoreModule.cpp` (the `OBCORE_UE_BUILD` branch)
-* `Source/OBTerrain/**`
+| Component | Verification |
+|---|---|
+| `OpenBattlefieldCore` + `OBTerrain` modules, editor target (Development) | Builds; only C4251 ("needs dll-interface") warnings for STL members of exported classes |
+| Game target, Shipping | Builds, no warnings |
+| Server target | **Not built**: requires a source-built engine; the installed engine has no server target |
+| `AOBTerrainActor` in an empty level | Generates a 5 x 5 x 5 chunk area (32-voxel chunks, 25 cm voxels); renders solid with `bFlipWinding = true` |
+| `ApplyCrater` | Visible craters inside a chunk, on a chunk face and on a chunk corner; complex-collision line traces at each centre drop by 275 cm for a 300 cm crater (3/3) |
+| Walking into a crater with a character | **Not done**: verified with line traces only |
 
-Expected risks when first compiled: UBT settings (`PCHUsage`, include-what-you-use warnings),
-`UPROPERTY` on `TMap<FIntVector, TObjectPtr<...>>`, `ProceduralMeshComponent` API drift, triangle
-winding (`bFlipWinding`), and `%s` with `ANSI_TO_TCHAR` in log macros. None of these affect the core.
-
-The first contributor with an engine installation should open an issue titled "First in-engine build"
-with the build log, and the fixes should be a single PR that updates this table.
+Fixes the first build needed: the `.generated.h` include must be last (UHT); the core's export macro
+needed `DLLEXPORT`/`DLLIMPORT`, which only engine headers define; `bFlipWinding` must default to
+true because core coordinates map directly onto Unreal's left-handed axes, mirroring the winding.
 
 ## Deferred features (by design)
 
