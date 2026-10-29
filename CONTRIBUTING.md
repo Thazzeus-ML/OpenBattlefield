@@ -30,6 +30,13 @@ claims; a small functioning implementation over a large collection of incomplete
 6. **Thin Unreal layers.** New logic goes into an engine-agnostic library first.
 7. **Server authority.** Nothing accepts client-supplied outcomes, costs or affected sets.
 
+## Claiming an issue
+
+Issues labelled `Offer/small`, `Offer/medium` or `Offer/large` are listed on Overflow with a
+point value. To claim one, comment `/claim` on the issue; a workflow assigns you and Overflow
+reserves the credit. Comment `/unclaim` to release it. Credit settles when the maintainer applies a
+`points/N` label after your pull request merges.
+
 ## Workflow
 
 * Branch from `main`, keep PRs focused, fill in the PR template.
