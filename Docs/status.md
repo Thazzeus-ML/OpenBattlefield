@@ -26,7 +26,7 @@ Built as `Plugins/OpenBattlefield` in a minimal C++ host project and run in a pa
 | Server target | **Not built**: requires a source-built engine; the installed engine has no server target |
 | `AOBTerrainActor` in an empty level | Generates a 5 x 5 x 5 chunk area (32-voxel chunks, 25 cm voxels); renders solid with `bFlipWinding = true` |
 | `ApplyCrater` | Visible craters inside a chunk, on a chunk face and on a chunk corner; complex-collision line traces at each centre drop by 275 cm for a 300 cm crater (3/3) |
-| Walking into a crater with a character | **Not done**: verified with line traces only |
+| Walking into a crater with a character | Default `ACharacter` capsule (AI-controlled) walks into two craters, one centred on a chunk face so it ends on the seam between two chunks' collision: both end on ground, 17–18 cm from the centre, feet 2 cm above the traced floor, never lower (2/2, three runs) |
 
 Fixes the first build needed: the `.generated.h` include must be last (UHT); the core's export macro
 needed `DLLEXPORT`/`DLLIMPORT`, which only engine headers define; `bFlipWinding` must default to
