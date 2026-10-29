@@ -5,6 +5,8 @@
 #include "OpenBattlefieldCore/ObTerrainWorld.h"
 
 #include <cmath>
+#include <map>
+#include <set>
 
 using namespace ob;
 
@@ -217,6 +219,129 @@ OB_TEST(WorldBuildsVersionedMeshInputWithNeighbourSamples)
     OB_REQUIRE(Succeeded(world.BuildMeshInput(ChunkCoord(-2, -2, -1), low)));
     OB_CHECK(low.At(-1, 3, 3) == Material::Air);
     OB_CHECK_EQ(BorderMismatches(world, low), size_t(0));
+}
+
+// Every loaded chunk whose mesh changed after a modification must be reported dirty, including face
+// neighbours whose own voxels did not change but whose boundary faces did (regression: only chunks
+// with changed voxels used to be marked, leaving holes in the neighbour's mesh).
+OB_TEST(ChunksWhoseMeshChangedAreMarkedDirty)
+{
+    WorldConfig cfg;
+    cfg.chunkSize = 16;
+    cfg.minChunk = ChunkCoord(-2, -2, -2);
+    cfg.maxChunk = ChunkCoord(1, 1, 1);
+    cfg.baseHeight = 8;
+    cfg.heightAmplitude = 4;
+    cfg.bedrockHeight = -40;
+    TerrainWorld world(cfg);
+
+    std::map<ChunkCoord, MeshData> meshes;
+    auto meshOf = [&](const ChunkCoord& c)
+    {
+        ChunkMeshInput in;
+        MeshData mesh;
+        if (Succeeded(world.BuildMeshInput(c, in)))
+            BuildChunkMesh(in, mesh);
+        return mesh;
+    };
+    for (int32_t z = -1; z <= 1; ++z)
+        for (int32_t y = -2; y <= 1; ++y)
+            for (int32_t x = -2; x <= 1; ++x)
+            {
+                Chunk* chunk = nullptr;
+                OB_REQUIRE(Succeeded(world.EnsureChunk(ChunkCoord(x, y, z), chunk)));
+            }
+    world.ForEachChunk([&](const Chunk& c) { meshes[c.Coord()] = meshOf(c.Coord()); });
+
+    // Craters and rubble that end exactly on chunk faces (x/y = 15 or 0 locally), plus random ones.
+    uint64_t rng = 12345;
+    auto next = [&rng](uint64_t bound)
+    {
+        rng = rng * 6364136223846793005ull + 1442695040888963407ull;
+        return (rng >> 33) % bound;
+    };
+    std::vector<TerrainOperation> ops;
+    TerrainOperation op;
+    op.worldId = cfg.worldId;
+    op.type = OperationType::SubtractSphere;
+    op.radius = 2;
+    op.center = VoxelCoord(13, 8, world.Generator().SurfaceHeight(13, 8)); // reaches x = 15 only
+    ops.push_back(op);
+    op.center = VoxelCoord(8, -14, world.Generator().SurfaceHeight(8, -14)); // reaches y = -16 only
+    ops.push_back(op);
+    for (int i = 0; i < 60; ++i)
+    {
+        const int64_t x = static_cast<int64_t>(next(56)) - 28;
+        const int64_t y = static_cast<int64_t>(next(56)) - 28;
+        op.radius = 1 + static_cast<uint32_t>(next(4));
+        op.type = next(3) == 0 ? OperationType::AddSphere : OperationType::SubtractSphere;
+        op.material = op.type == OperationType::AddSphere ? Material::Rock : Material::Air;
+        op.center =
+            VoxelCoord(x, y, world.Generator().SurfaceHeight(x, y) + static_cast<int64_t>(next(3)) - 1);
+        ops.push_back(op);
+    }
+
+    size_t neighbourOnly = 0;
+    for (size_t i = 0; i < ops.size(); ++i)
+    {
+        ops[i].operationId = 1 + i;
+        ops[i].sequenceNumber = 1 + i;
+        const OperationResult r = world.ApplyOperation(ops[i]);
+        OB_REQUIRE(r.Accepted());
+        std::vector<ChunkCoord> dirty;
+        world.TakeDirtyChunks(dirty);
+        const std::set<ChunkCoord> dirtySet(dirty.begin(), dirty.end());
+        const std::set<ChunkCoord> modified(r.modifiedChunks.begin(), r.modifiedChunks.end());
+        world.ForEachChunk(
+            [&](const Chunk& c)
+            {
+                MeshData now = meshOf(c.Coord());
+                MeshData& before = meshes[c.Coord()];
+                const bool changed = now.positions != before.positions ||
+                                     now.vertexMaterial != before.vertexMaterial ||
+                                     now.indices != before.indices;
+                if (changed)
+                {
+                    OB_CHECK(dirtySet.count(c.Coord()) == 1);
+                    neighbourOnly += modified.count(c.Coord()) == 0 ? 1u : 0u;
+                }
+                before = static_cast<MeshData&&>(now);
+            });
+    }
+    OB_CHECK(neighbourOnly >= 2); // the boundary craters above changed unmodified neighbours
+
+    // Force-unloading a modified chunk reverts its neighbours' borders to the foundation.
+    std::vector<ChunkCoord> modifiedCoords;
+    world.ForEachChunk(
+        [&](const Chunk& c)
+        {
+            if (c.IsModified())
+                modifiedCoords.push_back(c.Coord());
+        });
+    OB_REQUIRE(!modifiedCoords.empty());
+    size_t changedByUnload = 0;
+    for (const ChunkCoord& gone : modifiedCoords)
+    {
+        OB_REQUIRE(Succeeded(world.UnloadChunk(gone, true)));
+        meshes.erase(gone);
+        std::vector<ChunkCoord> dirty;
+        world.TakeDirtyChunks(dirty);
+        const std::set<ChunkCoord> dirtySet(dirty.begin(), dirty.end());
+        world.ForEachChunk(
+            [&](const Chunk& c)
+            {
+                MeshData now = meshOf(c.Coord());
+                MeshData& before = meshes[c.Coord()];
+                if (now.positions != before.positions || now.vertexMaterial != before.vertexMaterial ||
+                    now.indices != before.indices)
+                {
+                    OB_CHECK(dirtySet.count(c.Coord()) == 1);
+                    ++changedByUnload;
+                }
+                before = static_cast<MeshData&&>(now);
+            });
+    }
+    OB_CHECK(changedByUnload > 0);
 }
 
 OB_TEST_MAIN()

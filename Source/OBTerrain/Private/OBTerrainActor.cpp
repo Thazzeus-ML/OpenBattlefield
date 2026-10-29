@@ -174,12 +174,14 @@ bool AOBTerrainActor::RebuildChunk(const FIntVector& C)
     {
         return false;
     }
-    Chunk->ConsumeDirtyRegion(); // the reference path rebuilds the whole chunk; region is informational
+    // The reference path rebuilds the whole chunk; the region only says whether anything changed.
+    const bool bDirty = Chunk->ConsumeDirtyRegion().any;
 
-    // Version-checked publication: skip if what is on screen already matches the core.
+    // Version-checked publication: skip if what is on screen already matches the core. A dirty
+    // region with an unchanged version means a neighbour changed this chunk's boundary faces.
     if (const uint64* Published = PublishedVersions.Find(C))
     {
-        if (*Published == Chunk->Version() && ChunkMeshes.Contains(C))
+        if (!bDirty && *Published == Chunk->Version() && ChunkMeshes.Contains(C))
         {
             return false;
         }

@@ -13,7 +13,9 @@ class ByteWriter;
 class ByteReader;
 class Hasher;
 
-/// Inclusive local-coordinate box of voxels changed since the region was last consumed.
+/// Inclusive local-coordinate box of voxels whose mesh faces may have changed since the region was
+/// last consumed: voxels changed in this chunk, plus boundary voxels facing a change in a
+/// face-adjacent chunk (TerrainWorld marks those, see MarkFaceNeighboursDirty).
 struct DirtyRegion
 {
     bool any = false;
@@ -99,6 +101,13 @@ public:
     bool HasDirtyRegion() const { return dirty_.any; }
     /// Returns the dirty region and clears it.
     DirtyRegion ConsumeDirtyRegion();
+    /// Grows the dirty region by an inclusive box without changing content or version. Used when a
+    /// neighbour's change alters this chunk's boundary faces.
+    void IncludeInDirtyRegion(const LocalCoord& min, const LocalCoord& max)
+    {
+        dirty_.Include(min);
+        dirty_.Include(max);
+    }
 
     /// Direct access to the dense material array (X fastest). Intended for the generator and for
     /// snapshot creation; mutation through this pointer bypasses bookkeeping and is forbidden.

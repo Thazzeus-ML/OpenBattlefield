@@ -36,3 +36,11 @@ All notable changes to this project are documented here. The format follows
   is reconstructed from a checkpoint snapshot plus the journal suffix. Version, last sequence, state
   hash and duplicate detection are preserved. Snapshot and journal schema 2 (schema 1 still loads);
   new `ResultCode::JournalCompacted`; benchmark E reports compaction time and sizes (#5).
+
+### Fixed
+
+* A modification reaching a chunk face now marks the loaded face neighbour dirty (with the facing
+  border slab in its dirty region), and force-unloading a modified chunk does the same for its
+  neighbours. Previously only chunks whose own voxels changed were remeshed, leaving stale boundary
+  faces (holes) in neighbours. `AOBTerrainActor` no longer skips a dirty chunk whose version is
+  unchanged.
