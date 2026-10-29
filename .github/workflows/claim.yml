@@ -1,0 +1,56 @@
+# Lets contributors claim an issue themselves by commenting "/claim" (or "claim").
+# Overflow (https://overflow.nitjsefni.eu) reserves credit for an issue only once it has an
+# assignee, and this workflow is what makes self-assignment possible without write access.
+#
+# Rules:
+#   * Only issues, not pull requests.
+#   * The comment must be exactly "/claim" or "claim" (case-insensitive, surrounding whitespace ok).
+#   * An issue that already has an assignee is not reassigned; the workflow replies instead.
+#   * "/unclaim" removes the commenter from the assignees.
+name: claim
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  claim:
+    if: ${{ !github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const body = (context.payload.comment.body || '').trim().toLowerCase();
+            const user = context.payload.comment.user.login;
+            const issue_number = context.payload.issue.number;
+            const { owner, repo } = context.repo;
+            const assignees = (context.payload.issue.assignees || []).map(a => a.login);
+
+            if (body === '/unclaim' || body === 'unclaim') {
+              if (assignees.includes(user)) {
+                await github.rest.issues.removeAssignees({ owner, repo, issue_number, assignees: [user] });
+                await github.rest.issues.createComment({ owner, repo, issue_number,
+                  body: `@${user} released this issue. It is open for a new claim.` });
+              }
+              return;
+            }
+
+            if (body !== '/claim' && body !== 'claim') {
+              return;
+            }
+
+            if (assignees.length > 0) {
+              if (!assignees.includes(user)) {
+                await github.rest.issues.createComment({ owner, repo, issue_number,
+                  body: `@${user} this issue is already assigned to ${assignees.map(a => '@' + a).join(', ')}. Comment \`/claim\` again once they \`/unclaim\`.` });
+              }
+              return;
+            }
+
+            await github.rest.issues.addAssignees({ owner, repo, issue_number, assignees: [user] });
+            await github.rest.issues.createComment({ owner, repo, issue_number,
+              body: `@${user} you are assigned. Open a pull request that references #${issue_number}; comment \`/unclaim\` if you stop working on it.` });
