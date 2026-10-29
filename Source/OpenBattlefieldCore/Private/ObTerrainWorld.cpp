@@ -96,7 +96,17 @@ ResultCode TerrainWorld::UnloadChunk(const ChunkCoord& coord, bool force)
         return ResultCode::ChunkNotLoaded;
     if (it->second->IsModified() && !force)
         return ResultCode::ChunkModified;
+    const bool wasModified = it->second->IsModified();
     chunks_.erase(it);
+    if (wasModified)
+    {
+        // Neighbours' borders fall back to the procedural foundation: their whole facing slab changes.
+        DirtyRegion whole;
+        whole.Include(LocalCoord(0, 0, 0));
+        const uint32_t last = config_.chunkSize - 1;
+        whole.Include(LocalCoord(last, last, last));
+        MarkFaceNeighboursDirty(coord, whole);
+    }
     dirtyChunks_.erase(coord);
     ++stats_.chunksUnloaded;
     EventData e;
@@ -250,6 +260,9 @@ OperationResult TerrainWorld::ApplyOperation(const TerrainOperation& op)
         {
             chunk->CommitModification();
             dirtyChunks_.insert(cc);
+            // The accumulated region is a superset of this operation's changes, so this may mark a
+            // neighbour that a tighter box would not; never fewer.
+            MarkFaceNeighboursDirty(cc, chunk->Dirty());
             result.modifiedChunks.push_back(cc);
             result.changedVoxels += changed;
             ++stats_.chunkModifications;
@@ -297,6 +310,35 @@ ResultCode TerrainWorld::ReplayJournal(const std::vector<TerrainOperation>& ops,
 }
 
 // --- Dirty tracking -------------------------------------------------------------------------------
+
+void TerrainWorld::MarkFaceNeighboursDirty(const ChunkCoord& coord, const DirtyRegion& region)
+{
+    if (!region.any)
+        return;
+    // The face mesher reads only the six face neighbours of a voxel, so a change at local x = 0 can
+    // alter only the -x neighbour's faces at its x = n - 1 (and likewise for the other faces).
+    const uint32_t last = config_.chunkSize - 1;
+    const uint32_t lo[3] = {region.min.x, region.min.y, region.min.z};
+    const uint32_t hi[3] = {region.max.x, region.max.y, region.max.z};
+    for (int axis = 0; axis < 3; ++axis)
+        for (int side = -1; side <= 1; side += 2)
+        {
+            if (side < 0 ? lo[axis] != 0 : hi[axis] != last)
+                continue;
+            ChunkCoord nc = coord;
+            int32_t* c[3] = {&nc.x, &nc.y, &nc.z};
+            *c[axis] += side;
+            Chunk* neighbour = FindChunk(nc);
+            if (!neighbour)
+                continue; // no mesh exists for a chunk that is not loaded
+            uint32_t nlo[3] = {lo[0], lo[1], lo[2]};
+            uint32_t nhi[3] = {hi[0], hi[1], hi[2]};
+            nlo[axis] = nhi[axis] = side < 0 ? last : 0;
+            neighbour->IncludeInDirtyRegion(LocalCoord(nlo[0], nlo[1], nlo[2]),
+                                            LocalCoord(nhi[0], nhi[1], nhi[2]));
+            dirtyChunks_.insert(nc);
+        }
+}
 
 void TerrainWorld::TakeDirtyChunks(std::vector<ChunkCoord>& out)
 {

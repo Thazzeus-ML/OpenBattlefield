@@ -30,3 +30,11 @@ All notable changes to this project are documented here. The format follows
   column (one `SurfaceHeight` per column) for unloaded ones, instead of calling `SampleMaterial` per
   border voxel. Output bytes are unchanged; dirty-chunk flush is about 2-3x faster in
   `isolated_crater` and `boundary_crater` (#4).
+
+### Fixed
+
+* A modification reaching a chunk face now marks the loaded face neighbour dirty (with the facing
+  border slab in its dirty region), and force-unloading a modified chunk does the same for its
+  neighbours. Previously only chunks whose own voxels changed were remeshed, leaving stale boundary
+  faces (holes) in neighbours. `AOBTerrainActor` no longer skips a dirty chunk whose version is
+  unchanged.

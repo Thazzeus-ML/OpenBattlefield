@@ -60,7 +60,8 @@ public:
     ResultCode EnsureChunk(const ChunkCoord& coord, Chunk*& outChunk);
 
     /// Unloads a chunk. Modified chunks are refused (ChunkModified) unless force is set, because
-    /// their state would have to be reconstructed by journal replay.
+    /// their state would have to be reconstructed by journal replay. Force-unloading a modified chunk
+    /// marks the facing borders of loaded neighbours dirty, since they now see the foundation.
     ResultCode UnloadChunk(const ChunkCoord& coord, bool force = false);
 
     /// Material at a world voxel: the loaded chunk if present, otherwise the procedural foundation.
@@ -92,8 +93,10 @@ public:
 
     // --- Dirty tracking -----------------------------------------------------------------------------
 
-    /// Moves the sorted set of chunks with pending dirty regions into out and clears the pending set.
-    /// Per-chunk dirty regions are consumed separately through Chunk::ConsumeDirtyRegion.
+    /// Moves the sorted set of chunks whose mesh may have changed into out and clears the pending set.
+    /// This includes loaded face neighbours of a change that reaches a chunk boundary, whose content
+    /// and version are unchanged. Per-chunk dirty regions are consumed separately through
+    /// Chunk::ConsumeDirtyRegion.
     void TakeDirtyChunks(std::vector<ChunkCoord>& out);
     size_t PendingDirtyChunkCount() const { return dirtyChunks_.size(); }
 
@@ -139,6 +142,9 @@ public:
 
 private:
     Chunk& GenerateChunkUnchecked(const ChunkCoord& coord);
+    /// For each face of `region` (local to `coord`) that lies on the chunk boundary, grows the
+    /// facing border slab of the loaded neighbour into its dirty region and queues it for remesh.
+    void MarkFaceNeighboursDirty(const ChunkCoord& coord, const DirtyRegion& region);
     void Emit(const EventData& e);
     void RememberOperationId(OperationId id);
     bool IsRecentOperationId(OperationId id) const;
