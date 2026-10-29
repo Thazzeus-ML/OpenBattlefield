@@ -1,0 +1,121 @@
+# Standalone verification of the simulation core. No Unreal Engine is involved: the engine build
+# requires a licensed installation and is tracked separately (Docs/status.md).
+name: core-ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-gcc-release
+            os: ubuntu-24.04
+            preset: release
+            cc: gcc
+            cxx: g++
+          - name: linux-clang-release
+            os: ubuntu-24.04
+            preset: release
+            cc: clang
+            cxx: clang++
+          - name: linux-gcc-debug-cpp20
+            os: ubuntu-24.04
+            preset: cpp20
+            cc: gcc
+            cxx: g++
+            extra: -DCMAKE_BUILD_TYPE=Debug
+          - name: linux-gcc-asan-ubsan
+            os: ubuntu-24.04
+            preset: asan
+            cc: gcc
+            cxx: g++
+          - name: macos-appleclang-release
+            os: macos-14
+            preset: release
+          - name: windows-msvc-release
+            os: windows-2022
+            preset: msvc-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        shell: bash
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: cmake --preset ${{ matrix.preset }} ${{ matrix.extra }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --parallel
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} --parallel 2
+
+      - name: Benchmark smoke (JSON artifact)
+        shell: bash
+        run: |
+          BIN=$(find build/${{ matrix.preset }} -type f \( -name ob_bench -o -name ob_bench.exe \) | head -n 1)
+          "$BIN" --config Benchmarks/workloads/smoke.cfg --label "${{ matrix.name }}" --out bench-${{ matrix.name }}.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.name }}
+          path: bench-${{ matrix.name }}.json
+          retention-days: 30
+
+  determinism:
+    name: cross-compiler state hashes
+    runs-on: ubuntu-24.04
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bench-linux-*-release
+          merge-multiple: true
+      - name: Compare GCC and Clang hashes
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          a = json.load(open("bench-linux-gcc-release.json"))
+          b = json.load(open("bench-linux-clang-release.json"))
+          ha = {w["name"]: w["hashes"] for w in a["workloads"]}
+          hb = {w["name"]: w["hashes"] for w in b["workloads"]}
+          bad = [n for n in ha if ha[n] != hb.get(n)]
+          print("gcc:  ", ha)
+          print("clang:", hb)
+          if bad:
+              print("HASH MISMATCH:", bad); sys.exit(1)
+          print("state hashes identical across compilers")
+          PY
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check formatting
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang-format-18
+          FILES=$(git ls-files 'Source/*.h' 'Source/*.cpp' 'Tests/*.h' 'Tests/*.cpp' 'Benchmarks/*.h' 'Benchmarks/*.cpp')
+          clang-format-18 --dry-run --Werror $FILES

@@ -1,0 +1,30 @@
+# Standalone build output
+/build/
+/build-*/
+/out/
+/cmake-build-*/
+/Benchmarks/results/
+
+# Unreal Engine generated
+/Binaries/
+/Intermediate/
+/Saved/
+/DerivedDataCache/
+*.VC.db
+*.opensdf
+*.sdf
+*.sln
+*.suo
+*.xcodeproj
+*.xcworkspace
+.vs/
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db

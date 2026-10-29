@@ -1,0 +1,22 @@
+# OpenBattlefield formatting rules. Applied to Source/, Tests/ and Benchmarks/.
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++17
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 110
+BreakBeforeBraces: Allman
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+PointerAlignment: Left
+NamespaceIndentation: None
+FixNamespaceComments: true
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+AlignAfterOpenBracket: Align
+BinPackArguments: true
+BinPackParameters: true
+SpaceAfterTemplateKeyword: true
+AccessModifierOffset: -4
