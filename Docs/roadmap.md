@@ -18,7 +18,7 @@ Done, verified standalone:
 * Benchmark harness with workloads A–F and a comparison tool.
 * CI for the standalone build.
 
-Written, not yet compiled in-engine:
+Built and run on UE 5.8.2 (Windows), see `status.md`:
 
 * Unreal plugin shell: `OpenBattlefieldCore` and `OBTerrain` modules, terrain subsystem and actor.
 

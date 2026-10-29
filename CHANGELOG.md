@@ -33,6 +33,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+* First in-engine build (UE 5.8.2): the `.generated.h` include in `OBTerrainTypes.h` is last again
+  (UHT); the core export macro supplies `DLLEXPORT`/`DLLIMPORT`; `bFlipWinding` defaults to true
+  (the terrain rendered inside out) (#2).
+
 * A modification reaching a chunk face now marks the loaded face neighbour dirty (with the facing
   border slab in its dirty region), and force-unloading a modified chunk does the same for its
   neighbours. Previously only chunks whose own voxels changed were remeshed, leaving stale boundary

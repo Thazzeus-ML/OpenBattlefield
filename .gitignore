@@ -28,3 +28,10 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Unreal host project under Tools/UEHost
+/Tools/UEHost/Plugins/
+/Tools/UEHost/Binaries/
+/Tools/UEHost/Intermediate/
+/Tools/UEHost/Saved/
+/Tools/UEHost/DerivedDataCache/

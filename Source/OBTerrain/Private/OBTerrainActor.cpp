@@ -1,6 +1,6 @@
 // Copyright OpenBattlefield contributors. Licensed under the Apache License, Version 2.0.
 //
-// STATUS: not yet compiled against Unreal Engine. See Docs/status.md.
+// STATUS: built and run on UE 5.8.2 (Windows). See Docs/status.md.
 #include "OBTerrainActor.h"
 
 #include "Engine/World.h"
