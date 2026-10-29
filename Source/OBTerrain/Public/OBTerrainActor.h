@@ -48,9 +48,13 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield")
     bool bGenerateCollision = true;
 
-    /** Flip triangle winding if faces render inside out on your engine version. */
+    /**
+     * Reverse triangle winding when converting core meshes. The core emits counter-clockwise faces in a
+     * right-handed frame and its coordinates map directly onto Unreal's left-handed axes, which mirrors
+     * the winding, so this must stay true (verified in UE 5.8: false renders the terrain inside out).
+     */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield")
-    bool bFlipWinding = false;
+    bool bFlipWinding = true;
 
     /** Upper bound on chunk mesh rebuilds per tick; the rest stay queued (and conservative). */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield", meta = (ClampMin = "1"))

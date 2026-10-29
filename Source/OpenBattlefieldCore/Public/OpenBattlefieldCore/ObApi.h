@@ -8,6 +8,18 @@
 // builds). The standalone build never defines it, so OBCORE_API expands to nothing and the library is
 // linked statically. No Unreal header is included here or anywhere else in the core.
 #if defined(OPENBATTLEFIELDCORE_API)
+// UnrealBuildTool spells the attribute as DLLEXPORT / DLLIMPORT, which the engine's platform headers
+// define. The core includes none of them, so supply the same definitions (textually identical to the
+// engine's, so a later engine include is not a conflicting redefinition).
+#if !defined(DLLEXPORT)
+#if defined(_MSC_VER) || defined(_WIN32)
+#define DLLEXPORT __declspec(dllexport)
+#define DLLIMPORT __declspec(dllimport)
+#else
+#define DLLEXPORT __attribute__((visibility("default")))
+#define DLLIMPORT __attribute__((visibility("default")))
+#endif
+#endif
 #define OBCORE_API OPENBATTLEFIELDCORE_API
 #else
 #define OBCORE_API

@@ -4,8 +4,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "OBTerrainTypes.generated.h"
+
 #include "OpenBattlefieldCore/OpenBattlefieldCore.h"
+
+// UHT requires the generated header to be the last include (kept in its own block so
+// clang-format does not sort it).
+#include "OBTerrainTypes.generated.h"
 
 /**
  * Editor-facing description of a terrain world. Converted to ob::WorldConfig by ToCoreConfig().
