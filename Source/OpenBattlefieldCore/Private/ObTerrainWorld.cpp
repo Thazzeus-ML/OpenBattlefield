@@ -332,20 +332,63 @@ ResultCode TerrainWorld::BuildMeshInput(const ChunkCoord& coord, ChunkMeshInput&
                 out.padded[dstRow + x] = data[srcRow + x];
         }
 
-    // Border: sample the six neighbour slabs (edges/corners are never read by the face mesher, but we
-    // fill them for completeness so the snapshot is self-describing).
+    // Border: fill the 26 neighbour regions (six slabs, twelve edges, eight corners; edges/corners are
+    // never read by the face mesher, but we fill them for completeness so the snapshot is
+    // self-describing). The result is identical to calling SampleMaterial per border voxel, but loaded
+    // neighbours are copied directly and unloaded ones are generated per column, each column's surface
+    // height computed at most once and shared between regions. World bounds are chunk aligned, so a
+    // border voxel is in bounds iff its chunk is; out-of-bounds regions keep the Air fill.
     const VoxelCoord origin = ChunkOrigin(coord, n);
-    const int32_t lo = -1;
-    const int32_t hi = static_cast<int32_t>(n);
-    for (int32_t z = lo; z <= hi; ++z)
-        for (int32_t y = lo; y <= hi; ++y)
-            for (int32_t x = lo; x <= hi; ++x)
+    const int32_t sn = static_cast<int32_t>(n);
+    std::vector<int64_t> columnHeight(static_cast<size_t>(p) * p, 0);
+    std::vector<uint8_t> columnKnown(static_cast<size_t>(p) * p, 0);
+    for (int32_t dz = -1; dz <= 1; ++dz)
+        for (int32_t dy = -1; dy <= 1; ++dy)
+            for (int32_t dx = -1; dx <= 1; ++dx)
             {
-                const bool inside = x >= 0 && x < hi && y >= 0 && y < hi && z >= 0 && z < hi;
-                if (inside)
+                if (dx == 0 && dy == 0 && dz == 0)
                     continue;
-                const VoxelCoord v(origin.x + x, origin.y + y, origin.z + z);
-                out.padded[out.PaddedIndex(x, y, z)] = static_cast<uint8_t>(SampleMaterial(v));
+                const ChunkCoord nc(coord.x + dx, coord.y + dy, coord.z + dz);
+                if (!config_.ContainsChunk(nc))
+                    continue;
+                // Padded range per axis: -1 for d = -1, [0, n) for d = 0, n for d = +1.
+                const int32_t x0 = dx < 0 ? -1 : (dx > 0 ? sn : 0);
+                const int32_t x1 = dx == 0 ? sn - 1 : x0;
+                const int32_t y0 = dy < 0 ? -1 : (dy > 0 ? sn : 0);
+                const int32_t y1 = dy == 0 ? sn - 1 : y0;
+                const int32_t z0 = dz < 0 ? -1 : (dz > 0 ? sn : 0);
+                const int32_t z1 = dz == 0 ? sn - 1 : z0;
+
+                if (const Chunk* neighbour = FindChunk(nc))
+                {
+                    // The neighbour-local coordinate is the padded coordinate shifted by -d * n.
+                    const uint8_t* src = neighbour->Data();
+                    for (int32_t z = z0; z <= z1; ++z)
+                        for (int32_t y = y0; y <= y1; ++y)
+                            for (int32_t x = x0; x <= x1; ++x)
+                            {
+                                const LocalCoord l(static_cast<uint32_t>(x - dx * sn),
+                                                   static_cast<uint32_t>(y - dy * sn),
+                                                   static_cast<uint32_t>(z - dz * sn));
+                                out.padded[out.PaddedIndex(x, y, z)] = src[LocalIndex(l, n)];
+                            }
+                    continue;
+                }
+
+                for (int32_t y = y0; y <= y1; ++y)
+                    for (int32_t x = x0; x <= x1; ++x)
+                    {
+                        const size_t column =
+                            static_cast<size_t>(x + 1) + static_cast<size_t>(p) * static_cast<size_t>(y + 1);
+                        if (!columnKnown[column])
+                        {
+                            columnHeight[column] = generator_.SurfaceHeight(origin.x + x, origin.y + y);
+                            columnKnown[column] = 1;
+                        }
+                        for (int32_t z = z0; z <= z1; ++z)
+                            out.padded[out.PaddedIndex(x, y, z)] = static_cast<uint8_t>(
+                                generator_.MaterialForColumn(origin.z + z, columnHeight[column]));
+                    }
             }
     return ResultCode::Ok;
 }

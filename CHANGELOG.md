@@ -23,3 +23,10 @@ All notable changes to this project are documented here. The format follows
 * Unreal plugin shell: `.uplugin`, `OpenBattlefieldCore` and `OBTerrain` modules with a terrain world
   subsystem and a reference terrain actor (not yet compiled in-engine, see `Docs/status.md`).
 * Documentation set under `Docs/`, contribution framework, issue and PR templates.
+
+### Changed
+
+* `TerrainWorld::BuildMeshInput` copies the border from loaded neighbour chunks and generates it per
+  column (one `SurfaceHeight` per column) for unloaded ones, instead of calling `SampleMaterial` per
+  border voxel. Output bytes are unchanged; dirty-chunk flush is about 2-3x faster in
+  `isolated_crater` and `boundary_crater` (#4).

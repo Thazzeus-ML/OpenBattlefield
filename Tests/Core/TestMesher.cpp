@@ -114,6 +114,25 @@ OB_TEST(MesherIsDeterministicAndRejectsBadInput)
     OB_CHECK_EQ(m.VertexCount(), size_t(0));
 }
 
+// Counts border voxels of a mesh input that differ from per-voxel world sampling (the reference
+// definition of the border), including edges and corners.
+size_t BorderMismatches(const TerrainWorld& world, const ChunkMeshInput& in)
+{
+    const int32_t n = static_cast<int32_t>(in.size);
+    const VoxelCoord origin = ChunkOrigin(in.coord, in.size);
+    size_t mismatches = 0;
+    for (int32_t z = -1; z <= n; ++z)
+        for (int32_t y = -1; y <= n; ++y)
+            for (int32_t x = -1; x <= n; ++x)
+            {
+                if (x >= 0 && x < n && y >= 0 && y < n && z >= 0 && z < n)
+                    continue;
+                const VoxelCoord v(origin.x + x, origin.y + y, origin.z + z);
+                mismatches += in.At(x, y, z) != world.SampleMaterial(v) ? 1u : 0u;
+            }
+    return mismatches;
+}
+
 OB_TEST(WorldBuildsVersionedMeshInputWithNeighbourSamples)
 {
     WorldConfig cfg;
@@ -141,6 +160,7 @@ OB_TEST(WorldBuildsVersionedMeshInputWithNeighbourSamples)
                 OB_CHECK(in.At(x, y, z) == chunk->Get(LocalCoord(uint32_t(x), uint32_t(y), uint32_t(z))));
     for (int32_t y = 0; y < 16; ++y)
         OB_CHECK(in.At(-1, y, 5) == world.Generator().MaterialAt(VoxelCoord(-1, y, 5)));
+    OB_CHECK_EQ(BorderMismatches(world, in), size_t(0));
     OB_CHECK_EQ(world.LoadedChunkCount(), size_t(1)); // snapshot did not load neighbours
 
     MeshData mesh;
@@ -161,6 +181,42 @@ OB_TEST(WorldBuildsVersionedMeshInputWithNeighbourSamples)
     OB_REQUIRE(Succeeded(world.BuildMeshInput(ChunkCoord(0, 0, 0), after)));
     OB_CHECK_EQ(after.version, ChunkVersion(1));
     OB_CHECK(after.version != in.version);
+
+    // Loaded neighbours that differ from the procedural foundation: craters straddling a face (+x)
+    // and the (-x, -y) edge, plus a plain loaded neighbour below. The border must come from the
+    // loaded chunks, not the generator.
+    OB_REQUIRE(Succeeded(world.EnsureChunk(ChunkCoord(0, 0, -1), chunk)));
+    op.operationId = 2;
+    op.sequenceNumber = 2;
+    op.center = VoxelCoord(16, 8, 8);
+    OB_REQUIRE(world.ApplyOperation(op).Accepted());
+    op.operationId = 3;
+    op.sequenceNumber = 3;
+    op.type = OperationType::AddSphere;
+    op.material = Material::Rock;
+    op.center = VoxelCoord(-1, -1, 10);
+    OB_REQUIRE(world.ApplyOperation(op).Accepted());
+    const Chunk* plusX = world.FindChunk(ChunkCoord(1, 0, 0));
+    OB_REQUIRE(plusX != nullptr);
+    OB_CHECK(plusX->IsModified());
+    ChunkMeshInput mixed;
+    OB_REQUIRE(Succeeded(world.BuildMeshInput(ChunkCoord(0, 0, 0), mixed)));
+    OB_CHECK(mixed.At(16, 8, 8) == Material::Air);    // crater carved into the +x neighbour
+    OB_CHECK(mixed.At(-1, -1, 10) == Material::Rock); // added sphere in the (-1, -1, 0) edge chunk
+    OB_CHECK_EQ(BorderMismatches(world, mixed), size_t(0));
+
+    // A chunk on the world's max corner: borders beyond the bounds are Air.
+    OB_REQUIRE(Succeeded(world.EnsureChunk(ChunkCoord(1, 1, 1), chunk)));
+    ChunkMeshInput corner;
+    OB_REQUIRE(Succeeded(world.BuildMeshInput(ChunkCoord(1, 1, 1), corner)));
+    OB_CHECK(corner.At(16, 3, 3) == Material::Air);
+    OB_CHECK_EQ(BorderMismatches(world, corner), size_t(0));
+    // And on the min corner, below the surface so out-of-bounds Air differs from the generator.
+    OB_REQUIRE(Succeeded(world.EnsureChunk(ChunkCoord(-2, -2, -1), chunk)));
+    ChunkMeshInput low;
+    OB_REQUIRE(Succeeded(world.BuildMeshInput(ChunkCoord(-2, -2, -1), low)));
+    OB_CHECK(low.At(-1, 3, 3) == Material::Air);
+    OB_CHECK_EQ(BorderMismatches(world, low), size_t(0));
 }
 
 OB_TEST_MAIN()
