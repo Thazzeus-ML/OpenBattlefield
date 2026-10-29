@@ -62,8 +62,8 @@ that baseline:
 * ~~Greedy meshing to cut faces and mesh memory per area.~~ Done: `EmitGreedyChunkMesh`; mesh memory
   at 3.125 cm drops from 104 MB to 9.9 MB (841 k faces to 80 k quads), emitted in 21 ms.
 * ~~In-engine frame time and memory at 25, 12.5 and 6.25 cm in `Tools/UEHost`.~~ Done
-  (`AOBResolutionGameMode`, results in `status.md`): 6.25 cm over 32 m loads in about 1.3 s and
-  renders at 6-8 ms per frame with greedy meshes. A crater is a 15-45 ms single-frame hitch at every
+  (`AOBResolutionGameMode`, results in `status.md`): 6.25 cm over 32 m loads in about 2.1 s and
+  renders at 8-9 ms per frame with greedy meshes. A crater is a 15-57 ms single-frame hitch at every
   resolution because the actor remeshes synchronously.
 * Next: remesh craters off the game thread with version-checked publication (Milestone 2), then
   repeat the in-engine sweep, adding 3.125 cm.

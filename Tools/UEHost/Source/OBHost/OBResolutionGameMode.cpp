@@ -31,6 +31,8 @@ namespace
 {
 const FVector kTerrainOrigin(0.0, 0.0, 3000.0);
 constexpr double kHalfSideCm = 1600.0; // the scene is 32 m across at every voxel size
+// Meshed at least +/-4 m vertically: the relief (+/-2 m nominal, more at peaks and valleys) and craters.
+constexpr double kHalfHeightCm = 400.0;
 
 double Percentile(TArray<double> Values, double P)
 {
@@ -95,6 +97,7 @@ void AOBResolutionGameMode::SpawnTerrain()
     const int32 S = Scale;
     const double ChunkCm = 32.0 * VoxelCm;
     const int32 Radius = FMath::CeilToInt(kHalfSideCm / ChunkCm);
+    const int32 RadiusZ = FMath::Max(1, FMath::CeilToInt(kHalfHeightCm / ChunkCm));
     FActorSpawnParameters Params;
     Params.bDeferConstruction = true;
     Terrain = GetWorld()->SpawnActor<AOBTerrainActor>(AOBTerrainActor::StaticClass(),
@@ -102,8 +105,8 @@ void AOBResolutionGameMode::SpawnTerrain()
     FOBTerrainWorldSettings& Settings = Terrain->Settings;
     Settings.ChunkSize = 32;
     Settings.VoxelSizeCm = VoxelCm;
-    Settings.MinChunk = FIntVector(-Radius - 1, -Radius - 1, -2);
-    Settings.MaxChunk = FIntVector(Radius + 1, Radius + 1, 2);
+    Settings.MinChunk = FIntVector(-Radius - 1, -Radius - 1, -RadiusZ - 1);
+    Settings.MaxChunk = FIntVector(Radius + 1, Radius + 1, RadiusZ + 1);
     Settings.MaxOperationRadiusVoxels = 64 * S;
     Settings.BaseHeight = 0;
     Settings.HeightAmplitude = 8 * S;
@@ -112,7 +115,7 @@ void AOBResolutionGameMode::SpawnTerrain()
     Settings.SoilDepth = 10 * S;
     Settings.BedrockHeight = -64 * S;
     Terrain->VisibleChunkRadius = Radius;
-    Terrain->VisibleChunkRadiusZ = 1;
+    Terrain->VisibleChunkRadiusZ = RadiusZ;
     Terrain->MaxChunkRebuildsPerTick = 100000; // load everything as fast as possible: measures throughput
     Terrain->bGreedyMeshing = bGreedy;
     Terrain->FinishSpawning(FTransform(kTerrainOrigin));
