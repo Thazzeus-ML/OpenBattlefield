@@ -303,8 +303,11 @@ size_t TerrainWorld::CompactJournal(size_t keepLast)
     const size_t drop = journal_.size() - keepLast;
     // The duplicate-detection window is kept separately (recentIds_), so it is unaffected; chunk
     // contents and versions already reflect every dropped operation.
-    journal_.erase(journal_.begin(), journal_.begin() + static_cast<std::ptrdiff_t>(drop));
-    journal_.shrink_to_fit();
+    // Copy the suffix into a right-sized vector: shrink_to_fit is non-binding, and libstdc++ ignores it
+    // when exceptions are disabled, which would keep the dropped entries' memory.
+    std::vector<TerrainOperation> suffix(journal_.begin() + static_cast<std::ptrdiff_t>(drop),
+                                         journal_.end());
+    journal_.swap(suffix);
     journalBase_ += drop;
     return drop;
 }
