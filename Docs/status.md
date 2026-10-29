@@ -35,7 +35,6 @@ with the build log, and the fixes should be a single PR that updates this table.
 ## Deferred features (by design)
 
 * Asynchronous mesh/collision rebuilds (policy documented in `concurrency.md`, `rendering-collision.md`).
-* Dirty-region-limited remeshing (the AABB is tracked, not yet consumed by the mesher).
 * Client-side requests and replication (`networking.md`).
 * Smooth surfaces / density representation (`terrain.md`).
 * Editor module (`future-modules.md`).
@@ -44,6 +43,7 @@ with the build log, and the fixes should be a single PR that updates this table.
 
 * Dense chunks: 1 byte per voxel regardless of content.
 * Journal compaction (`CompactJournal`) is manual; there is no automatic checkpoint policy yet.
-* Whole-chunk remesh on any change (the border is copied from loaded neighbours and generated per
-  column for unloaded ones, but the interior is always remeshed in full).
+* Remeshing rescans only the dirty region (`UpdateChunkFaces`), but every remesh still builds a full
+  `ChunkMeshInput` snapshot and re-emits the whole chunk's `MeshData`; `AOBTerrainActor` still
+  rebuilds whole chunks with `BuildChunkMesh`.
 * The procedural foundation is a heightfield; caves only arise from modifications.

@@ -9,6 +9,10 @@ All notable changes to this project are documented here. The format follows
 
 * The project is described as game agnostic throughout: no genre, setting or game mode is assumed
   (README, plugin description, roadmap, module plans).
+* Incremental remeshing: `ChunkFaces`, `BuildChunkFaces`, `UpdateChunkFaces` and `EmitChunkMesh` keep
+  a chunk's visible faces per (y, z) row and rescan only the dirty region expanded by one voxel,
+  producing exactly `BuildChunkMesh`'s output. The benchmark flush path uses it, and the crater
+  workloads mesh their chunks (untimed) before the crater, as a renderer would (#3).
 * `TerrainWorld::BuildMeshInput` copies the border from loaded neighbour chunks and generates it per
   column (one `SurfaceHeight` per column) for unloaded ones, instead of calling `SampleMaterial` per
   border voxel. Output bytes are unchanged; dirty-chunk flush is about 2-3x faster in

@@ -344,4 +344,158 @@ OB_TEST(ChunksWhoseMeshChangedAreMarkedDirty)
     OB_CHECK(changedByUnload > 0);
 }
 
+OB_TEST(EmittedFacesMatchTheReferenceMesher)
+{
+    ChunkMeshInput in = EmptyInput(8);
+    Set(in, 0, 0, 0, Material::Soil);
+    Set(in, 1, 0, 0, Material::Rock);
+    Set(in, 7, 7, 7, Material::Grass);
+    Set(in, -1, 3, 3, Material::Rock); // border only
+    Set(in, 0, 3, 3, Material::Soil);
+    MeshData reference;
+    const size_t expected = BuildChunkMesh(in, reference);
+    ChunkFaces faces;
+    OB_CHECK_EQ(BuildChunkFaces(in, faces), expected);
+    MeshData emitted;
+    EmitChunkMesh(faces, emitted);
+    OB_CHECK(emitted.positions == reference.positions && emitted.normals == reference.normals &&
+             emitted.vertexMaterial == reference.vertexMaterial && emitted.indices == reference.indices);
+
+    // Faces built for another chunk or size are rebuilt rather than patched; bad input clears them.
+    ChunkMeshInput other = in;
+    other.coord = ChunkCoord(1, 0, 0);
+    Set(other, 4, 4, 4, Material::Rock);
+    MeshData otherReference;
+    const size_t otherFaces = BuildChunkMesh(other, otherReference);
+    OB_CHECK_EQ(UpdateChunkFaces(other, LocalCoord(0, 0, 0), LocalCoord(0, 0, 0), faces), otherFaces);
+    OB_CHECK(faces.coord == other.coord);
+    ChunkMeshInput bad = in;
+    bad.padded.pop_back();
+    OB_CHECK_EQ(BuildChunkFaces(bad, faces), size_t(0));
+    OB_CHECK(!faces.IsBuiltFor(in.coord, in.size));
+}
+
+// Incremental remeshing from TerrainWorld's dirty regions must produce exactly the faces and mesh of
+// a full rebuild, for randomized operations that cross chunk faces, edges and corners, several
+// operations accumulating between flushes, chunks loaded by operations, and forced unloads.
+OB_TEST(IncrementalRemeshMatchesFullRebuild)
+{
+    for (uint32_t chunkSize : {8u, 16u})
+    {
+        WorldConfig cfg;
+        cfg.chunkSize = chunkSize;
+        cfg.minChunk = ChunkCoord(-4, -4, -4);
+        cfg.maxChunk = ChunkCoord(3, 3, 3);
+        cfg.baseHeight = 4;
+        cfg.heightAmplitude = 6;
+        cfg.bedrockHeight = -60;
+        cfg.maxOperationRadius = 16;
+        TerrainWorld world(cfg);
+        const int32_t span = static_cast<int32_t>(chunkSize) * 2;
+
+        std::map<ChunkCoord, ChunkFaces> cache;
+        for (int32_t z = -1; z <= 0; ++z)
+            for (int32_t y = -2; y <= 1; ++y)
+                for (int32_t x = -2; x <= 1; ++x)
+                {
+                    Chunk* chunk = nullptr;
+                    OB_REQUIRE(Succeeded(world.EnsureChunk(ChunkCoord(x, y, z), chunk)));
+                }
+
+        uint64_t rng = 99 + chunkSize;
+        auto next = [&rng](uint64_t bound)
+        {
+            rng = rng * 6364136223846793005ull + 1442695040888963407ull;
+            return (rng >> 33) % bound;
+        };
+        size_t updates = 0, rebuilds = 0, mismatches = 0;
+        auto flush = [&]()
+        {
+            std::vector<ChunkCoord> dirty;
+            world.TakeDirtyChunks(dirty);
+            for (const ChunkCoord& c : dirty)
+            {
+                Chunk* chunk = world.FindChunk(c);
+                if (!chunk)
+                    continue;
+                const DirtyRegion region = chunk->ConsumeDirtyRegion();
+                ChunkMeshInput in;
+                OB_REQUIRE(Succeeded(world.BuildMeshInput(c, in)));
+                ChunkFaces& faces = cache[c];
+                const bool incremental = faces.IsBuiltFor(c, chunkSize);
+                if (region.any)
+                    UpdateChunkFaces(in, region.min, region.max, faces);
+                else if (!incremental)
+                    BuildChunkFaces(in, faces);
+                updates += incremental ? 1u : 0u;
+                rebuilds += incremental ? 0u : 1u;
+            }
+            // Every loaded chunk's cached faces must equal a full rebuild, dirty or not.
+            world.ForEachChunk(
+                [&](const Chunk& chunk)
+                {
+                    ChunkMeshInput in;
+                    if (Failed(world.BuildMeshInput(chunk.Coord(), in)))
+                        return;
+                    ChunkFaces& faces = cache[chunk.Coord()];
+                    if (!faces.IsBuiltFor(chunk.Coord(), chunkSize))
+                        BuildChunkFaces(in, faces); // first seen without ever being dirty
+                    ChunkFaces full;
+                    BuildChunkFaces(in, full);
+                    MeshData reference;
+                    MeshData emitted;
+                    BuildChunkMesh(in, reference);
+                    EmitChunkMesh(faces, emitted);
+                    if (full.faces != faces.faces || full.rowStart != faces.rowStart ||
+                        emitted.positions != reference.positions || emitted.normals != reference.normals ||
+                        emitted.vertexMaterial != reference.vertexMaterial ||
+                        emitted.indices != reference.indices)
+                        ++mismatches;
+                });
+        };
+        flush(); // initial meshes
+
+        SequenceNumber seq = 0;
+        for (int i = 0; i < 150; ++i)
+        {
+            TerrainOperation op;
+            op.operationId = static_cast<OperationId>(i + 1);
+            op.sequenceNumber = ++seq;
+            op.worldId = cfg.worldId;
+            const int64_t x = static_cast<int64_t>(next(static_cast<uint64_t>(span) * 2)) - span;
+            const int64_t y = static_cast<int64_t>(next(static_cast<uint64_t>(span) * 2)) - span;
+            op.radius = 1 + static_cast<uint32_t>(next(chunkSize));
+            op.type = next(4) == 0 ? OperationType::AddSphere : OperationType::SubtractSphere;
+            op.material = op.type == OperationType::AddSphere ? Material::Rock : Material::Air;
+            op.center =
+                VoxelCoord(x, y, world.Generator().SurfaceHeight(x, y) + static_cast<int64_t>(next(5)) - 2);
+            OB_REQUIRE(world.ApplyOperation(op).Accepted());
+            if (next(3) == 0)
+                flush(); // otherwise regions accumulate over several operations
+            if (i == 100)
+            {
+                // Force-unload a modified chunk: neighbours' borders revert to the foundation.
+                ChunkCoord victim;
+                bool found = false;
+                world.ForEachChunk(
+                    [&](const Chunk& c)
+                    {
+                        if (!found && c.IsModified())
+                        {
+                            victim = c.Coord();
+                            found = true;
+                        }
+                    });
+                OB_REQUIRE(found);
+                OB_REQUIRE(Succeeded(world.UnloadChunk(victim, true)));
+                cache.erase(victim);
+            }
+        }
+        flush();
+        OB_CHECK_EQ(mismatches, size_t(0));
+        OB_CHECK(updates > 50); // the incremental path was exercised, not just the fallback
+        OB_CHECK(rebuilds > 0);
+    }
+}
+
 OB_TEST_MAIN()

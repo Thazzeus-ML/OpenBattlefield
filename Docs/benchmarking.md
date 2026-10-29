@@ -40,6 +40,11 @@ time where a whole-iteration figure is reported, serialized sizes, state hashes,
 Throughput figures: `operations_per_second` includes the synchronous mesh flush;
 `apply_only_operations_per_second` counts only `ApplyOperation`.
 
+The flush path keeps each chunk's `ChunkFaces` between flushes and remeshes incrementally from the
+dirty region; a chunk seen for the first time is meshed in full. `isolated_crater` and
+`boundary_crater` mesh their chunks before the crater, outside the timed region, so `dirty_flush_ns`
+measures an update of an already visible chunk. Older results measured a full remesh.
+
 ## Measurement protocol
 
 * Fixed seed and parameters, recorded in the JSON (`params`). `bench_compare.py` refuses to compare

@@ -219,22 +219,45 @@ std::vector<TerrainOperation> ArtillerySequence(const WorldConfig& cfg, uint32_t
     return ops;
 }
 
-// Rebuilds derived data (mesh) for every pending dirty chunk: the synchronous reference path.
-uint64_t FlushDirty(TerrainWorld& world, std::vector<ChunkCoord>& scratch, ChunkMeshInput& input,
-                    MeshData& mesh, uint64_t* outFaces)
+// Derived mesh state kept per chunk between flushes, as a renderer would keep it.
+struct MeshCache
+{
+    std::map<ChunkCoord, ChunkFaces> faces;
+    ChunkMeshInput input;
+    MeshData mesh; // last emitted mesh
+};
+
+// Builds faces and mesh for a chunk with no cached faces (first time it is shown).
+size_t MeshChunk(TerrainWorld& world, const ChunkCoord& cc, MeshCache& cache)
+{
+    if (Failed(world.BuildMeshInput(cc, cache.input)))
+        return 0;
+    ChunkFaces& faces = cache.faces[cc];
+    const size_t n = BuildChunkFaces(cache.input, faces);
+    EmitChunkMesh(faces, cache.mesh);
+    return n;
+}
+
+// Rebuilds derived data (mesh) for every pending dirty chunk: the synchronous reference path. Chunks
+// with cached faces are remeshed incrementally from their dirty region; others are meshed in full.
+uint64_t FlushDirty(TerrainWorld& world, std::vector<ChunkCoord>& scratch, MeshCache& cache,
+                    uint64_t* outFaces)
 {
     world.TakeDirtyChunks(scratch);
     for (const ChunkCoord& cc : scratch)
     {
         Chunk* chunk = world.FindChunk(cc);
-        if (chunk)
-            chunk->ConsumeDirtyRegion();
-        if (Succeeded(world.BuildMeshInput(cc, input)))
-        {
-            const size_t faces = BuildChunkMesh(input, mesh);
-            if (outFaces)
-                *outFaces += faces;
-        }
+        if (!chunk)
+            continue;
+        const DirtyRegion region = chunk->ConsumeDirtyRegion();
+        if (Failed(world.BuildMeshInput(cc, cache.input)))
+            continue;
+        ChunkFaces& faces = cache.faces[cc];
+        const size_t n = region.any ? UpdateChunkFaces(cache.input, region.min, region.max, faces)
+                                    : BuildChunkFaces(cache.input, faces);
+        EmitChunkMesh(faces, cache.mesh);
+        if (outFaces)
+            *outFaces += n;
     }
     return scratch.size();
 }
@@ -316,14 +339,15 @@ WorkloadResult RunIsolatedCrater(const Params& p)
     uint64_t changed = 0;
     uint64_t faces = 0;
     std::vector<ChunkCoord> scratch;
-    ChunkMeshInput input;
-    MeshData mesh;
+    MeshCache cache;
     for (uint32_t it = 0; it < p.warmup + p.iterations; ++it)
     {
         const bool measured = it >= p.warmup;
         TerrainWorld world(cfg);
         Chunk* chunk = nullptr;
         world.EnsureChunk(ChunkCoord(0, 0, 0), chunk);
+        cache.faces.clear();
+        MeshChunk(world, ChunkCoord(0, 0, 0), cache); // visible before the crater, untimed
         TerrainOperation op;
         op.operationId = 1;
         op.sequenceNumber = 1;
@@ -336,7 +360,7 @@ WorkloadResult RunIsolatedCrater(const Params& p)
         const uint64_t applyNs = t.ElapsedNs();
         ScopedTimer td;
         faces = 0;
-        FlushDirty(world, scratch, input, mesh, &faces);
+        FlushDirty(world, scratch, cache, &faces);
         const uint64_t dirtyNs = td.ElapsedNs();
         if (measured)
         {
@@ -392,8 +416,7 @@ WorkloadResult RunBoundaryCrater(const Params& p)
     uint64_t changed = 0;
     uint64_t faces = 0;
     std::vector<ChunkCoord> scratch;
-    ChunkMeshInput input;
-    MeshData mesh;
+    MeshCache cache;
     TerrainOperation op;
     op.operationId = 1;
     op.sequenceNumber = 1;
@@ -412,12 +435,14 @@ WorkloadResult RunBoundaryCrater(const Params& p)
                     Chunk* c = nullptr;
                     world.EnsureChunk(ChunkCoord(x, y, z), c);
                 }
+        cache.faces.clear();
+        world.ForEachChunk([&](const Chunk& c) { MeshChunk(world, c.Coord(), cache); }); // untimed
         ScopedTimer t;
         const OperationResult res = world.ApplyOperation(op);
         const uint64_t applyNs = t.ElapsedNs();
         ScopedTimer td;
         faces = 0;
-        FlushDirty(world, scratch, input, mesh, &faces);
+        FlushDirty(world, scratch, cache, &faces);
         const uint64_t dirtyNs = td.ElapsedNs();
         if (measured)
         {
@@ -477,12 +502,12 @@ WorkloadResult RunArtillery(const Params& p)
     uint64_t cpuNs = 0;
     MemoryInfo mem;
     std::vector<ChunkCoord> scratch;
-    ChunkMeshInput input;
-    MeshData mesh;
+    MeshCache cache;
     for (uint32_t it = 0; it < p.warmup + p.iterations; ++it)
     {
         const bool measured = it >= p.warmup;
         TerrainWorld world(cfg);
+        cache.faces.clear();
         AllocDelta ad;
         const uint64_t cpuStart = CpuNs();
         ScopedTimer tt;
@@ -501,7 +526,7 @@ WorkloadResult RunArtillery(const Params& p)
             if ((i + 1) % kFlushEvery == 0 || i + 1 == ops.size())
             {
                 ScopedTimer tf;
-                flushedChunks += FlushDirty(world, scratch, input, mesh, &faces);
+                flushedChunks += FlushDirty(world, scratch, cache, &faces);
                 if (measured)
                     flush.samplesNs.push_back(static_cast<double>(tf.ElapsedNs()));
             }
@@ -661,8 +686,7 @@ WorkloadResult RunStress(const Params& p)
     uint64_t rejected = 0, changed = 0, faces = 0;
     uint64_t firstSample = 0, lastSample = 0;
     std::vector<ChunkCoord> scratch;
-    ChunkMeshInput input;
-    MeshData mesh;
+    MeshCache cache;
     AllocDelta ad;
     const uint64_t cpuStart = CpuNs();
     ScopedTimer total;
@@ -678,7 +702,7 @@ WorkloadResult RunStress(const Params& p)
         if ((i + 1) % kFlushEvery == 0 || i + 1 == ops.size())
         {
             ScopedTimer tf;
-            FlushDirty(world, scratch, input, mesh, &faces);
+            FlushDirty(world, scratch, cache, &faces);
             flush.samplesNs.push_back(static_cast<double>(tf.ElapsedNs()));
         }
         if ((i + 1) % sampleEvery == 0)
