@@ -12,5 +12,8 @@ not part of the plugin; UnrealBuildTool only compiles it when you open or build 
 `AOBShowcaseGameMode` spawns an `AOBTerrainActor` over the template map, waits until every chunk is
 meshed, screenshots it, applies three craters through `ApplyCrater` (inside a chunk, on a chunk face,
 on a chunk corner), checks with complex-collision line traces that the surface dropped by most of the
-crater radius, screenshots again and quits. Results are logged with the prefix `OBShowcase:`;
+crater radius, and screenshots again. It then walks two default `ACharacter` capsules (AI-controlled,
+with a cylinder for visibility) into two of the craters, one centred on a chunk face so the walk ends on
+a chunk seam, checks that each ends standing on the crater floor without ever dropping below it,
+takes a close-up and quits. Results are logged with the prefix `OBShowcase:`;
 screenshots land in `Saved/Showcase/`.

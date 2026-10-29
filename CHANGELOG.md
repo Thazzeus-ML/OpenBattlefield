@@ -54,6 +54,8 @@ All notable changes to this project are documented here. The format follows
 * `ob_snapshot` (`Tools/Snapshot`): headless PNG render of a cratered diorama through the core
   mesher with renderer-style dirty flushes; fails (exit 3) and draws chunks red if any cached mesh
   is stale. Run in CI as `ob_snapshot_smoke`.
+* `Tools/UEHost` also walks a character into craters (one on a chunk seam) and checks it ends standing
+  on the crater floor; recorded in `Docs/status.md` (#2).
 
 ### Fixed
 
