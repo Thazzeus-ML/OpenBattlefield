@@ -2,7 +2,7 @@
 //
 // Headless visual snapshot of the terrain pipeline: no Unreal Engine, no dependencies.
 //
-//   ob_snapshot --out FILE.png [--ops N] [--seed S] [--width W] [--height H]
+//   ob_snapshot --out FILE.png [--ops N] [--seed S] [--width W] [--height H] [--greedy] [--edges]
 //
 // Builds a small walled diorama world, applies a deterministic artillery barrage through the
 // authoritative path (ApplyOperation), and keeps one mesh per chunk the way a renderer does: every
@@ -170,6 +170,25 @@ void FillTriangle(Image& img, const float x[3], const float y[3], const float d[
         }
 }
 
+// Darkens the visible pixels along a projected edge (depth-tested with a small bias toward the camera).
+void DrawEdge(Image& img, float x0, float y0, float d0, float x1, float y1, float d1)
+{
+    const int steps = static_cast<int>(std::ceil(std::max(std::fabs(x1 - x0), std::fabs(y1 - y0)))) + 1;
+    for (int i = 0; i <= steps; ++i)
+    {
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        const int px = static_cast<int>(x0 + (x1 - x0) * t);
+        const int py = static_cast<int>(y0 + (y1 - y0) * t);
+        if (px < 0 || py < 0 || px >= img.w || py >= img.h)
+            continue;
+        const size_t k = static_cast<size_t>(py) * static_cast<size_t>(img.w) + static_cast<size_t>(px);
+        if (d0 + (d1 - d0) * t < img.depth[k] - 0.6f)
+            continue;
+        for (size_t c = 0; c < 3; ++c)
+            img.rgb[k * 3 + c] = static_cast<uint8_t>(img.rgb[k * 3 + c] / 2);
+    }
+}
+
 const uint8_t* MaterialColour(uint8_t m)
 {
     static const uint8_t colours[5][3] = {
@@ -186,6 +205,8 @@ struct Options
     uint64_t seed = 20240601;
     int width = 1280;
     int height = 860;
+    bool greedy = false; // draw EmitGreedyChunkMesh's quads instead of one quad per voxel face
+    bool edges = false;  // outline every quad
 };
 
 bool SameMesh(const MeshData& a, const MeshData& b)
@@ -212,10 +233,15 @@ int main(int argc, char** argv)
             opt.width = std::atoi(argv[++i]);
         else if (arg == "--height" && val)
             opt.height = std::atoi(argv[++i]);
+        else if (arg == "--greedy")
+            opt.greedy = true;
+        else if (arg == "--edges")
+            opt.edges = true;
         else
         {
             std::fprintf(stderr,
-                         "usage: ob_snapshot --out FILE.png [--ops N] [--seed S] [--width W] [--height H]\n");
+                         "usage: ob_snapshot --out FILE.png [--ops N] [--seed S] [--width W] [--height H] "
+                         "[--greedy] [--edges]\n");
             return 2;
         }
     }
@@ -326,6 +352,20 @@ int main(int argc, char** argv)
         });
     const size_t stale = staleChunks.size();
 
+    // Greedy: draw each chunk's merged quads, built from the faces of its current content. Stale
+    // chunks keep their cached mesh so they still show up red.
+    size_t quads = 0;
+    if (opt.greedy)
+        world.ForEachChunk(
+            [&](const Chunk& c)
+            {
+                if (staleChunks.count(c.Coord()) != 0 || Failed(world.BuildMeshInput(c.Coord(), input)))
+                    return;
+                ChunkFaces chunkFaces;
+                BuildChunkFaces(input, chunkFaces);
+                quads += EmitGreedyChunkMesh(chunkFaces, meshes[c.Coord()]);
+            });
+
     // Fit the projected world box to the image.
     const VoxelBox bounds = cfg.VoxelBounds();
     float minX = 1e30f, maxX = -1e30f, minY = 1e30f, maxY = -1e30f;
@@ -395,16 +435,43 @@ int main(int argc, char** argv)
         }
     }
 
+    // Quad outlines, after every surface is in the depth buffer. Quads are four consecutive vertices.
+    if (opt.edges)
+        for (const auto& kv : meshes)
+        {
+            const MeshData& m = kv.second;
+            const VoxelCoord o = ChunkOrigin(kv.first, cfg.chunkSize);
+            for (size_t q = 0; q * 4 < m.VertexCount(); ++q)
+            {
+                if (m.normals[q * 12] + m.normals[q * 12 + 1] + m.normals[q * 12 + 2] <= 0.0f)
+                    continue;
+                float sx[4], sy[4], sd[4];
+                for (int v = 0; v < 4; ++v)
+                {
+                    const size_t vi = q * 4 + static_cast<size_t>(v);
+                    const Vec3 p{m.positions[vi * 3] + static_cast<float>(o.x),
+                                 m.positions[vi * 3 + 1] + static_cast<float>(o.y),
+                                 m.positions[vi * 3 + 2] + static_cast<float>(o.z)};
+                    Project(p, sx[v], sy[v], sd[v]);
+                    sx[v] = sx[v] * scale + ox;
+                    sy[v] = sy[v] * scale + oy;
+                }
+                for (int v = 0; v < 4; ++v)
+                    DrawEdge(img, sx[v], sy[v], sd[v], sx[(v + 1) % 4], sy[(v + 1) % 4], sd[(v + 1) % 4]);
+            }
+        }
+
     if (!WritePng(opt.out, opt.width, opt.height, img.rgb))
     {
         std::fprintf(stderr, "could not write %s\n", opt.out.c_str());
         return 1;
     }
     std::printf("{\"operations\": %u, \"accepted\": %llu, \"changed_voxels\": %llu, \"chunks\": %zu, "
-                "\"chunk_remeshes\": %llu, \"faces\": %zu, \"stale_chunks\": %zu, \"state_hash\": "
+                "\"chunk_remeshes\": %llu, \"faces\": %zu, \"greedy_quads\": %zu, \"stale_chunks\": %zu, "
+                "\"state_hash\": "
                 "\"0x%016llx\", \"out\": \"%s\"}\n",
                 opt.ops, static_cast<unsigned long long>(accepted), static_cast<unsigned long long>(changed),
-                world.LoadedChunkCount(), static_cast<unsigned long long>(remeshes), faces, stale,
+                world.LoadedChunkCount(), static_cast<unsigned long long>(remeshes), faces, quads, stale,
                 static_cast<unsigned long long>(world.ComputeStateHash()), opt.out.c_str());
     return stale == 0 ? 0 : 3;
 }
