@@ -296,6 +296,19 @@ ResultCode TerrainWorld::ReplayJournal(const std::vector<TerrainOperation>& ops,
     return ResultCode::Ok;
 }
 
+size_t TerrainWorld::CompactJournal(size_t keepLast)
+{
+    if (journal_.size() <= keepLast)
+        return 0;
+    const size_t drop = journal_.size() - keepLast;
+    // The duplicate-detection window is kept separately (recentIds_), so it is unaffected; chunk
+    // contents and versions already reflect every dropped operation.
+    journal_.erase(journal_.begin(), journal_.begin() + static_cast<std::ptrdiff_t>(drop));
+    journal_.shrink_to_fit();
+    journalBase_ += drop;
+    return drop;
+}
+
 // --- Dirty tracking -------------------------------------------------------------------------------
 
 void TerrainWorld::TakeDirtyChunks(std::vector<ChunkCoord>& out)
@@ -379,6 +392,7 @@ StateHash TerrainWorld::ComputeLoadedChunkHash() const
 StateHash TerrainWorld::ComputeJournalHash() const
 {
     Hasher h;
+    h.U64(journalBase_);
     h.U64(static_cast<uint64_t>(journal_.size()));
     for (const TerrainOperation& op : journal_)
         op.HashInto(h);
@@ -397,6 +411,14 @@ void TerrainWorld::SerializeSnapshot(ByteWriter& w) const
     w.U32(static_cast<uint32_t>(journal_.size()));
     for (const TerrainOperation& op : journal_)
         op.Serialize(w);
+    // Schema 2: the journal base, then the oldest ids of the duplicate-detection window that are no
+    // longer in the journal (the rest of the window is the journal tail). Empty unless compacted.
+    w.U64(journalBase_);
+    const size_t inJournal = MinOf(journal_.size(), recentIdOrder_.size());
+    const size_t beforeJournal = recentIdOrder_.size() - inJournal;
+    w.U32(static_cast<uint32_t>(beforeJournal));
+    for (size_t i = 0; i < beforeJournal; ++i)
+        w.U64(recentIdOrder_[i]);
     w.U32(static_cast<uint32_t>(ModifiedChunkCount()));
     for (const auto& kv : chunks_)
         if (kv.second->IsModified())
@@ -412,7 +434,7 @@ ResultCode TerrainWorld::DeserializeSnapshot(ByteReader& r, std::unique_ptr<Terr
     uint16_t schema = 0;
     if (!r.U16(schema))
         return ResultCode::SerializationTruncated;
-    if (schema != kSnapshotSchemaVersion)
+    if (schema != 1 && schema != kSnapshotSchemaVersion)
         return ResultCode::SerializationVersionMismatch;
 
     WorldConfig config;
@@ -445,12 +467,37 @@ ResultCode TerrainWorld::DeserializeSnapshot(ByteReader& r, std::unique_ptr<Terr
     }
     if (opCount > 0 && world->lastSequence_ != prevSeq)
         return ResultCode::SerializationCorrupt;
-    // Until journal compaction exists, the world version equals the number of accepted operations.
-    if (world->worldVersion_ != opCount)
+
+    // Schema 1 has no compaction: the journal is the full history and the window is its tail.
+    std::vector<OperationId> beforeJournal;
+    if (schema >= 2)
+    {
+        uint32_t beforeCount = 0;
+        if (!r.U64(world->journalBase_) || !r.U32(beforeCount))
+            return ResultCode::SerializationTruncated;
+        // Window ids older than the journal exist only for dropped operations, and only while the
+        // journal is shorter than the window.
+        const size_t inJournal = MinOf(world->journal_.size(), kRecentOperationWindow);
+        if (beforeCount > kRecentOperationWindow - inJournal || beforeCount > world->journalBase_)
+            return ResultCode::SerializationCorrupt;
+        beforeJournal.resize(beforeCount);
+        for (uint32_t i = 0; i < beforeCount; ++i)
+            if (!r.U64(beforeJournal[i]))
+                return ResultCode::SerializationTruncated;
+    }
+    // Every accepted operation advanced the version once: those dropped by compaction plus the
+    // journal.
+    if (world->journalBase_ > world->worldVersion_ || world->worldVersion_ - world->journalBase_ != opCount)
         return ResultCode::SerializationCorrupt;
 
-    // Restore the duplicate-detection window from the journal tail; a repeated id inside it means
-    // the snapshot was not produced by a TerrainWorld.
+    // Restore the duplicate-detection window (pre-journal ids, then the journal tail); a repeated id
+    // inside it means the snapshot was not produced by a TerrainWorld.
+    for (OperationId id : beforeJournal)
+    {
+        if (world->IsRecentOperationId(id))
+            return ResultCode::SerializationCorrupt;
+        world->RememberOperationId(id);
+    }
     const size_t firstRecent =
         world->journal_.size() > kRecentOperationWindow ? world->journal_.size() - kRecentOperationWindow : 0;
     for (size_t i = firstRecent; i < world->journal_.size(); ++i)
@@ -485,27 +532,37 @@ ResultCode TerrainWorld::DeserializeSnapshot(ByteReader& r, std::unique_ptr<Terr
 void TerrainWorld::SerializeJournal(ByteWriter& w) const
 {
     w.Bytes(kJournalMagic, 4);
-    w.U16(kSnapshotSchemaVersion);
+    w.U16(kJournalSchemaVersion);
     config_.Serialize(w);
+    w.U64(journalBase_);
     w.U32(static_cast<uint32_t>(journal_.size()));
     for (const TerrainOperation& op : journal_)
         op.Serialize(w);
 }
 
 ResultCode TerrainWorld::DeserializeJournal(ByteReader& r, WorldConfig& outConfig,
-                                            std::vector<TerrainOperation>& outOps)
+                                            std::vector<TerrainOperation>& outOps, WorldVersion* outBase)
 {
     outOps.clear();
+    if (outBase)
+        *outBase = 0;
     if (!ReadMagic(r, kJournalMagic))
         return r.Ok() ? ResultCode::SerializationBadMagic : ResultCode::SerializationTruncated;
     uint16_t schema = 0;
     if (!r.U16(schema))
         return ResultCode::SerializationTruncated;
-    if (schema != kSnapshotSchemaVersion)
+    if (schema != 1 && schema != kJournalSchemaVersion)
         return ResultCode::SerializationVersionMismatch;
     ResultCode code = outConfig.Deserialize(r);
     if (Failed(code))
         return code;
+    WorldVersion base = 0; // schema 1 journals are always the full history
+    if (schema >= 2 && !r.U64(base))
+        return ResultCode::SerializationTruncated;
+    if (base != 0 && !outBase)
+        return ResultCode::JournalCompacted;
+    if (outBase)
+        *outBase = base;
     uint32_t count = 0;
     if (!r.U32(count))
         return ResultCode::SerializationTruncated;

@@ -29,7 +29,8 @@ negative coordinates, canonical container ordering, and canonical serialization 
 
 Unmodified chunks are excluded (they are a pure function of the config), so the hash does not
 depend on which chunks are loaded. `ComputeLoadedChunkHash()` includes everything loaded and exists
-for tests. `ComputeJournalHash()` identifies the command history.
+for tests. `ComputeJournalHash()` identifies the command history (the journal base and the retained
+operations), so it changes on compaction while the state hash does not.
 
 Struct memory is never hashed: padding and endianness would make the hash platform dependent.
 
