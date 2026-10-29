@@ -28,6 +28,30 @@ Built as `Plugins/OpenBattlefield` in a minimal C++ host project and run in a pa
 | `ApplyCrater` | Visible craters inside a chunk, on a chunk face and on a chunk corner; complex-collision line traces at each centre drop by 275 cm for a 300 cm crater (3/3) |
 | Walking into a crater with a character | Default `ACharacter` capsule (AI-controlled) walks into two craters, one centred on a chunk face so it ends on the seam between two chunks' collision: both end on ground, 17–18 cm from the centre, feet 2 cm above the traced floor, never lower (2/2, three runs) |
 
+### Resolution in engine
+
+`AOBResolutionGameMode` (`Tools/UEHost`) loads the core `resolution` scene (32 m across) at each
+voxel size, with greedy meshing on and off. Development editor binary in `-game`, 1600 x 900, VSync
+off, one Windows 11 machine. Load is the second load of the session (the first warms the engine).
+Frame time is per-process noisy by about +/-1 ms (three 6.25 cm pairs ranged 6.2-7.6 ms greedy and
+6.3-6.4 ms per face), so only differences larger than that are read as real.
+
+| voxel | mesh | chunks | triangles | load | process memory | frame p50 | GPU p50 | crater remesh (one frame) |
+|---|---|---|---|---|---|---|---|---|
+| 25 cm | greedy | 45 | 17 k | 0.12 s | +1.7 MB | 4.8 ms | 2.4 ms | 19 ms |
+| 25 cm | per face | 45 | 70 k | 0.25 s | +6.3 MB | 5.0 ms | 2.5 ms | 33 ms |
+| 12.5 cm | greedy | 116 | 51 k | 0.38 s | +6.8 MB | 5.3 ms | 2.6 ms | 15 ms |
+| 12.5 cm | per face | 116 | 226 k | 0.76 s | +37 MB | 5.4 ms | 2.7 ms | 37 ms |
+| 6.25 cm | greedy | 346 | 171 k | 1.2-1.5 s | +21 MB | 6.2-7.6 ms | 2.9-3.3 ms | 20-28 ms |
+| 6.25 cm | per face | 346 | 776 k | 2.5 s | +61 MB | 6.3-6.4 ms | 3.2 ms | 38-45 ms |
+
+* Steady frame time follows the number of chunk components more than triangles: at 6.25 cm, 4.5x
+  fewer triangles change the GPU time by about 8 % and the frame time by less than the noise.
+* Greedy meshing halves load time and the crater remesh, and cuts process memory by 3-5x.
+* **A crater is a frame hitch at every resolution**: `AOBTerrainActor` rebuilds every affected chunk
+  synchronously in one frame (15-45 ms, above a 16.7 ms budget). Off-game-thread remeshing
+  (Milestone 2) is what removes it.
+
 Fixes the first build needed: the `.generated.h` include must be last (UHT); the core's export macro
 needed `DLLEXPORT`/`DLLIMPORT`, which only engine headers define; `bFlipWinding` must default to
 true because core coordinates map directly onto Unreal's left-handed axes, mirroring the winding.

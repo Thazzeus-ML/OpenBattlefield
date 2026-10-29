@@ -61,6 +61,28 @@ struct OBTERRAIN_API FOBTerrainWorldSettings
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "OpenBattlefield|Generation")
     int32 BedrockHeight = -100;
 
+    /** log2 of the largest noise feature spacing in voxels. Add 1 per halving of VoxelSizeCm to keep
+     *  the same physical terrain (with HeightAmplitude, TopsoilDepth, SoilDepth and BedrockHeight
+     *  doubled). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "OpenBattlefield|Generation",
+              meta = (ClampMin = "0", ClampMax = "30"))
+    int32 NoiseScaleLog2 = 6;
+
+    /** Number of value-noise octaves. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "OpenBattlefield|Generation",
+              meta = (ClampMin = "1", ClampMax = "8"))
+    int32 NoiseOctaves = 3;
+
+    /** Depth of the grass layer in voxels. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "OpenBattlefield|Generation",
+              meta = (ClampMin = "0"))
+    int32 TopsoilDepth = 1;
+
+    /** Depth of the soil layer below the grass in voxels. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "OpenBattlefield|Generation",
+              meta = (ClampMin = "0"))
+    int32 SoilDepth = 10;
+
     ob::WorldConfig ToCoreConfig() const
     {
         ob::WorldConfig Config;
@@ -74,6 +96,10 @@ struct OBTERRAIN_API FOBTerrainWorldSettings
         Config.baseHeight = BaseHeight;
         Config.heightAmplitude = HeightAmplitude;
         Config.bedrockHeight = BedrockHeight;
+        Config.noiseScaleLog2 = static_cast<uint32_t>(NoiseScaleLog2);
+        Config.noiseOctaves = static_cast<uint32_t>(NoiseOctaves);
+        Config.topsoilDepth = static_cast<uint32_t>(TopsoilDepth);
+        Config.soilDepth = static_cast<uint32_t>(SoilDepth);
         return Config;
     }
 };
