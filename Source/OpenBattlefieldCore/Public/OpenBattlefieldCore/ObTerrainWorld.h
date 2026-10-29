@@ -35,8 +35,12 @@ class ByteReader;
 class OBCORE_API TerrainWorld
 {
 public:
-    /// Snapshot format version written by SerializeSnapshot.
-    static constexpr uint16_t kSnapshotSchemaVersion = 1;
+    /// Snapshot format version written by SerializeSnapshot. Version 2 adds the journal base and the
+    /// part of the duplicate-detection window that predates the journal; version 1 still loads.
+    static constexpr uint16_t kSnapshotSchemaVersion = 2;
+    /// Journal format version written by SerializeJournal. Version 2 adds the journal base; version 1
+    /// still loads.
+    static constexpr uint16_t kJournalSchemaVersion = 2;
     /// Number of most recent operation ids retained for duplicate detection.
     static constexpr size_t kRecentOperationWindow = 4096;
 
@@ -86,9 +90,19 @@ public:
     /// Applies an ordered list of operations, stopping at the first rejection.
     ResultCode ReplayJournal(const std::vector<TerrainOperation>& ops, size_t* outApplied = nullptr);
 
+    /// Operations accepted since JournalBase(), in order. Version() == JournalBase() + Journal().size().
     const std::vector<TerrainOperation>& Journal() const { return journal_; }
     WorldVersion Version() const { return worldVersion_; }
     SequenceNumber LastSequence() const { return lastSequence_; }
+    /// Number of accepted operations dropped by CompactJournal (world version the journal starts at).
+    /// Zero means the journal is the full history and replays onto a fresh world.
+    WorldVersion JournalBase() const { return journalBase_; }
+
+    /// Drops all but the most recent keepLast journal entries. The modified chunks already hold their
+    /// effect, so the state hash, chunk versions, Version(), LastSequence() and duplicate detection are
+    /// unchanged; afterwards the world is reconstructable from a snapshot plus the operations that
+    /// follow it, but not from the journal alone. Returns the number of entries dropped.
+    size_t CompactJournal(size_t keepLast);
 
     // --- Dirty tracking -----------------------------------------------------------------------------
 
@@ -125,11 +139,14 @@ public:
     static ResultCode DeserializeSnapshot(ByteReader& r, std::unique_ptr<TerrainWorld>& outWorld,
                                           InstrumentationSink* sink = nullptr);
 
-    /// Writes only the journal (config + ordered operations). Replay against a fresh world rebuilds
-    /// the same state.
+    /// Writes only the journal (config + journal base + ordered operations). When JournalBase() is
+    /// zero, replay against a fresh world rebuilds the same state.
     void SerializeJournal(ByteWriter& w) const;
+    /// Reads SerializeJournal output. A compacted journal (base > 0) cannot rebuild a world from the
+    /// procedural foundation and is refused with JournalCompacted unless outBase is given.
     static ResultCode DeserializeJournal(ByteReader& r, WorldConfig& outConfig,
-                                         std::vector<TerrainOperation>& outOps);
+                                         std::vector<TerrainOperation>& outOps,
+                                         WorldVersion* outBase = nullptr);
 
     // --- Diagnostics --------------------------------------------------------------------------------
 
@@ -154,6 +171,7 @@ private:
 
     std::vector<TerrainOperation> journal_;
     WorldVersion worldVersion_ = 0;
+    WorldVersion journalBase_ = 0;
     SequenceNumber lastSequence_ = 0;
     std::set<OperationId> recentIds_;
     std::deque<OperationId> recentIdOrder_;
