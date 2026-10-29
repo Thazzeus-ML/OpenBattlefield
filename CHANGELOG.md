@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+* The project is described as game agnostic throughout: no genre, setting or game mode is assumed
+  (README, plugin description, roadmap, module plans).
+* Incremental remeshing: `ChunkFaces`, `BuildChunkFaces`, `UpdateChunkFaces` and `EmitChunkMesh` keep
+  a chunk's visible faces per (y, z) row and rescan only the dirty region expanded by one voxel,
+  producing exactly `BuildChunkMesh`'s output. The benchmark flush path uses it, and the crater
+  workloads mesh their chunks (untimed) before the crater, as a renderer would (#3).
+* `TerrainWorld::BuildMeshInput` copies the border from loaded neighbour chunks and generates it per
+  column (one `SurfaceHeight` per column) for unloaded ones, instead of calling `SampleMaterial` per
+  border voxel. Output bytes are unchanged; dirty-chunk flush is about 2-3x faster in
+  `isolated_crater` and `boundary_crater` (#4).
+
 ### Added
 
 * Engine-agnostic simulation core (`OpenBattlefieldCore`): integer coordinates with floor division
@@ -23,17 +36,10 @@ All notable changes to this project are documented here. The format follows
 * Unreal plugin shell: `.uplugin`, `OpenBattlefieldCore` and `OBTerrain` modules with a terrain world
   subsystem and a reference terrain actor (not yet compiled in-engine, see `Docs/status.md`).
 * Documentation set under `Docs/`, contribution framework, issue and PR templates.
-
-### Changed
-
-* Incremental remeshing: `ChunkFaces`, `BuildChunkFaces`, `UpdateChunkFaces` and `EmitChunkMesh` keep
-  a chunk's visible faces per (y, z) row and rescan only the dirty region expanded by one voxel,
-  producing exactly `BuildChunkMesh`'s output. The benchmark flush path uses it, and the crater
-  workloads mesh their chunks (untimed) before the crater, as a renderer would (#3).
-* `TerrainWorld::BuildMeshInput` copies the border from loaded neighbour chunks and generates it per
-  column (one `SurfaceHeight` per column) for unloaded ones, instead of calling `SampleMaterial` per
-  border voxel. Output bytes are unchanged; dirty-chunk flush is about 2-3x faster in
-  `isolated_crater` and `boundary_crater` (#4).
+* `TerrainWorld::CompactJournal(keepLast)` and `JournalBase()`: drop old journal entries so a world
+  is reconstructed from a checkpoint snapshot plus the journal suffix. Version, last sequence, state
+  hash and duplicate detection are preserved. Snapshot and journal schema 2 (schema 1 still loads);
+  new `ResultCode::JournalCompacted`; benchmark E reports compaction time and sizes (#5).
 
 ### Fixed
 

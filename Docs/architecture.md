@@ -4,7 +4,7 @@ OpenBattlefield is a hybrid: an independently testable simulation core, thin Unr
 integration layers, and external benchmark/research tooling.
 
 ```text
-Applications / Reference Game        (future: Game/ReferenceBattlefield)
+Applications / Reference Game        (future: sample projects built on the plugin)
               |
         UE5 Integration              Source/OBTerrain  (UWorldSubsystem, AActor, ProceduralMesh)
               |
