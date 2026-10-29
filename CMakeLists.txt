@@ -13,6 +13,7 @@ project(OpenBattlefield
 
 option(OB_BUILD_TESTS "Build the core test suite" ON)
 option(OB_BUILD_BENCHMARKS "Build the benchmark harness" ON)
+option(OB_BUILD_TOOLS "Build developer tools (ob_snapshot)" ON)
 option(OB_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(OB_ENABLE_SANITIZERS "Enable Address/Undefined sanitizers (GCC/Clang)" OFF)
 set(OB_CXX_STANDARD "17" CACHE STRING "C++ standard used to compile the core (17 or 20)")
@@ -122,4 +123,8 @@ endif()
 
 if(OB_BUILD_BENCHMARKS)
   add_subdirectory(Benchmarks/Core)
+endif()
+
+if(OB_BUILD_TOOLS)
+  add_subdirectory(Tools/Snapshot)
 endif()

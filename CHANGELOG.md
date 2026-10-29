@@ -26,6 +26,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+* `ob_snapshot` (`Tools/Snapshot`): headless PNG render of a cratered diorama through the core
+  mesher with renderer-style dirty flushes; fails (exit 3) and draws chunks red if any cached mesh
+  is stale. Run in CI as `ob_snapshot_smoke`.
 * Incremental remeshing: `ChunkFaces`, `BuildChunkFaces`, `UpdateChunkFaces` and `EmitChunkMesh` keep
   a chunk's visible faces per (y, z) row and rescan only the dirty region expanded by one voxel,
   producing exactly `BuildChunkMesh`'s output. The benchmark flush path uses it, and the crater

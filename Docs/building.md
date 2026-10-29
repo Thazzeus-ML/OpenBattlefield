@@ -37,6 +37,18 @@ Run a single test binary with a name filter: `./build/release/Tests/Core/TestWor
 
 Please report the result of the first in-engine build in an issue (see `status.md`).
 
+## Visual snapshot (no Unreal required)
+
+```bash
+./build/release/Tools/Snapshot/ob_snapshot --out snapshot.png [--ops N] [--seed S] [--width W] [--height H]
+```
+
+Renders a 4 x 4 x 2 chunk diorama after a deterministic artillery barrage, using the core's own
+mesher and keeping one mesh per chunk the way a renderer does (each flush rebuilds only the chunks
+`TakeDirtyChunks` reports). Alternate chunks are tinted so boundaries are visible. Every cached
+mesh is compared with a fresh rebuild; stale chunks are drawn red, counted in the JSON line printed
+to stdout, and make the tool exit with code 3. `ctest` runs a small version as `ob_snapshot_smoke`.
+
 ## Formatting
 
 ```bash
