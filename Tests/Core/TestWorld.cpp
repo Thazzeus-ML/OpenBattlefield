@@ -2,6 +2,7 @@
 #include "ObTest.h"
 
 #include "OpenBattlefieldCore/ObCoordinates.h"
+#include "OpenBattlefieldCore/ObSerialization.h"
 #include "OpenBattlefieldCore/ObTerrainWorld.h"
 
 using namespace ob;
@@ -328,6 +329,44 @@ OB_TEST(StateHashIsIndependentOfLoadedUnmodifiedChunks)
     OB_CHECK_EQ(a.ComputeStateHash(), b.ComputeStateHash());
     OB_CHECK(a.ComputeLoadedChunkHash() != b.ComputeLoadedChunkHash());
     OB_CHECK(a.LoadedChunkCount() < b.LoadedChunkCount());
+}
+
+OB_TEST(GenerationStoresUniformChunksCompactlyWithIdenticalContent)
+{
+    // Chunks above the surface are all Air and those below the soil all Rock: both are stored without
+    // a voxel array, every voxel still reads the generator's material, and edits work across them.
+    TerrainWorld world(Cfg());
+    size_t uniformCount = 0;
+    for (int32_t z = -3; z <= 2; ++z)
+    {
+        Chunk* c = nullptr;
+        OB_REQUIRE(Succeeded(world.EnsureChunk(ChunkCoord(0, 0, z), c)));
+        uniformCount += c->IsUniform() ? 1u : 0u;
+        if (c->IsUniform())
+            OB_CHECK_EQ(c->MemoryBytes(), sizeof(Chunk));
+        const VoxelCoord o = ChunkOrigin(c->Coord(), 16);
+        for (uint32_t lz = 0; lz < 16; ++lz)
+            for (uint32_t ly = 0; ly < 16; ly += 5)
+                for (uint32_t lx = 0; lx < 16; lx += 3)
+                    OB_CHECK(c->Get(LocalCoord(lx, ly, lz)) ==
+                             world.Generator().MaterialAt(VoxelCoord(o.x + lx, o.y + ly, o.z + lz)));
+    }
+    OB_CHECK(uniformCount >= 2); // at least the topmost (Air) and bottommost (Rock or Bedrock)
+
+    // A crater reaching from the surface into a uniform Rock chunk below materialises it, and a
+    // snapshot of the result round trips with the same state hash.
+    TerrainWorld twin(Cfg());
+    const int64_t h = world.Generator().SurfaceHeight(8, 8);
+    const TerrainOperation op = Subtract(1, 1, VoxelCoord(8, 8, h - 10), 14);
+    OB_REQUIRE(world.ApplyOperation(op).Accepted());
+    OB_REQUIRE(twin.ApplyOperation(op).Accepted());
+    OB_CHECK_EQ(world.ComputeStateHash(), twin.ComputeStateHash());
+    ByteWriter w;
+    world.SerializeSnapshot(w);
+    std::unique_ptr<TerrainWorld> loaded;
+    ByteReader r(w.Buffer());
+    OB_REQUIRE(Succeeded(TerrainWorld::DeserializeSnapshot(r, loaded)));
+    OB_CHECK_EQ(loaded->ComputeStateHash(), world.ComputeStateHash());
 }
 
 OB_TEST_MAIN()

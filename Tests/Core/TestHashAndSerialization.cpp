@@ -182,4 +182,93 @@ OB_TEST(ChunkSerializationRoundTripsWithRunLengthEncoding)
     OB_CHECK_EQ(Chunk::Deserialize(r3, 16, back), ResultCode::SerializationCorrupt);
 }
 
+namespace
+{
+// Bytes and hash of a chunk, for comparing representations of the same content.
+std::vector<uint8_t> Serialized(const Chunk& c)
+{
+    ByteWriter w;
+    c.Serialize(w);
+    return w.Buffer();
+}
+StateHash ContentHash(const Chunk& c)
+{
+    Hasher h;
+    c.HashContentInto(h);
+    return h.Finish();
+}
+} // namespace
+
+OB_TEST(UniformChunksBehaveExactlyLikeTheirDenseForm)
+{
+    // A new chunk is uniform Air with no voxel array.
+    Chunk uniform(ChunkCoord(1, -2, 3), 16);
+    OB_CHECK(uniform.IsUniform());
+    OB_CHECK(uniform.UniformMaterial() == Material::Air);
+    OB_CHECK(uniform.Data() == nullptr);
+    OB_CHECK_EQ(uniform.MemoryBytes(), sizeof(Chunk));
+    OB_CHECK(uniform.Get(LocalCoord(7, 8, 9)) == Material::Air);
+    OB_CHECK(!uniform.SetRaw(LocalCoord(7, 8, 9), Material::Air)); // no change, still uniform
+    OB_CHECK(uniform.IsUniform());
+
+    // The same content held densely: change one voxel and change it back.
+    Chunk dense(ChunkCoord(1, -2, 3), 16);
+    OB_REQUIRE(dense.Modify(LocalCoord(0, 0, 0), Material::Rock));
+    OB_REQUIRE(dense.Modify(LocalCoord(0, 0, 0), Material::Air));
+    OB_CHECK(!dense.IsUniform());
+    OB_CHECK(dense.Data() != nullptr);
+    OB_CHECK(Serialized(dense) == Serialized(uniform));
+    OB_CHECK_EQ(ContentHash(dense), ContentHash(uniform));
+
+    // Compact frees the array without changing content, hash or bytes.
+    OB_CHECK(dense.Compact());
+    OB_CHECK(dense.IsUniform());
+    OB_CHECK_EQ(dense.MemoryBytes(), sizeof(Chunk));
+    OB_CHECK_EQ(ContentHash(dense), ContentHash(uniform));
+
+    // A uniform solid chunk, built voxel by voxel then compacted, matches its dense twin, counts its
+    // solids, and allocates again (only) on the first real change.
+    Chunk rock(ChunkCoord(0, 0, -1), 16);
+    for (uint32_t z = 0; z < 16; ++z)
+        for (uint32_t y = 0; y < 16; ++y)
+            for (uint32_t x = 0; x < 16; ++x)
+                rock.SetRaw(LocalCoord(x, y, z), Material::Rock);
+    rock.RecountSolids();
+    const std::vector<uint8_t> denseBytes = Serialized(rock);
+    const StateHash denseHash = ContentHash(rock);
+    OB_CHECK(rock.Compact());
+    OB_CHECK(rock.UniformMaterial() == Material::Rock);
+    OB_CHECK(rock.IsAllSolid());
+    OB_CHECK(Serialized(rock) == denseBytes);
+    OB_CHECK_EQ(ContentHash(rock), denseHash);
+    OB_CHECK(!rock.Modify(LocalCoord(4, 4, 4), Material::Rock));
+    OB_CHECK(rock.IsUniform());
+    OB_CHECK(rock.Modify(LocalCoord(4, 4, 4), Material::Air));
+    OB_CHECK(!rock.IsUniform());
+    OB_CHECK(rock.Get(LocalCoord(4, 4, 4)) == Material::Air);
+    OB_CHECK(rock.Get(LocalCoord(4, 4, 5)) == Material::Rock);
+    OB_CHECK_EQ(rock.SolidCount(), uint32_t(16 * 16 * 16 - 1));
+    OB_CHECK(rock.HasDirtyRegion());
+    OB_CHECK(!rock.Compact()); // mixed content stays dense
+
+    // Round trips: a uniform chunk deserializes uniform; a dense one deserializes dense.
+    Chunk back(ChunkCoord(), 16);
+    ByteReader r1(denseBytes);
+    OB_REQUIRE(Succeeded(Chunk::Deserialize(r1, 16, back)));
+    OB_CHECK(back.IsUniform());
+    OB_CHECK(back.UniformMaterial() == Material::Rock);
+    OB_CHECK_EQ(back.SolidCount(), uint32_t(16 * 16 * 16));
+    const std::vector<uint8_t> mixed = Serialized(rock);
+    ByteReader r2(mixed);
+    OB_REQUIRE(Succeeded(Chunk::Deserialize(r2, 16, back)));
+    OB_CHECK(!back.IsUniform());
+    OB_CHECK_EQ(ContentHash(back), ContentHash(rock));
+
+    // A single run that does not cover the chunk is rejected.
+    std::vector<uint8_t> shortRun = denseBytes;
+    shortRun[shortRun.size() - 4] ^= 0x01; // run length low byte
+    ByteReader r3(shortRun);
+    OB_CHECK_EQ(Chunk::Deserialize(r3, 16, back), ResultCode::SerializationCorrupt);
+}
+
 OB_TEST_MAIN()

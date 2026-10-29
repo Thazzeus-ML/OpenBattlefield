@@ -14,14 +14,39 @@ constexpr uint8_t kChunkMagic[4] = {'O', 'B', 'C', 'H'};
 
 Chunk::Chunk(const ChunkCoord& coord, uint32_t chunkSize)
     : coord_(coord), size_(chunkSize),
-      materials_(static_cast<size_t>(chunkSize) * static_cast<size_t>(chunkSize) *
-                     static_cast<size_t>(chunkSize),
-                 static_cast<uint8_t>(Material::Air))
+      voxelCount_(static_cast<size_t>(chunkSize) * static_cast<size_t>(chunkSize) *
+                  static_cast<size_t>(chunkSize)),
+      uniform_(static_cast<uint8_t>(Material::Air))
 {
+    // Starts uniform Air: no voxel array until a voxel differs.
+}
+
+void Chunk::Materialize()
+{
+    materials_.assign(voxelCount_, uniform_);
+}
+
+bool Chunk::Compact()
+{
+    if (materials_.empty())
+        return true;
+    const uint8_t first = materials_[0];
+    for (uint8_t m : materials_)
+        if (m != first)
+            return false;
+    uniform_ = first;
+    std::vector<uint8_t>().swap(materials_); // release the memory, not just the size
+    return true;
 }
 
 bool Chunk::SetRaw(const LocalCoord& c, Material m)
 {
+    if (materials_.empty())
+    {
+        if (static_cast<uint8_t>(m) == uniform_)
+            return false;
+        Materialize();
+    }
     uint8_t& slot = materials_[LocalIndex(c, size_)];
     const uint8_t v = static_cast<uint8_t>(m);
     if (slot == v)
@@ -32,6 +57,12 @@ bool Chunk::SetRaw(const LocalCoord& c, Material m)
 
 bool Chunk::Modify(const LocalCoord& c, Material m)
 {
+    if (materials_.empty())
+    {
+        if (static_cast<uint8_t>(m) == uniform_)
+            return false;
+        Materialize();
+    }
     uint8_t& slot = materials_[LocalIndex(c, size_)];
     const uint8_t v = static_cast<uint8_t>(m);
     if (slot == v)
@@ -56,6 +87,11 @@ DirtyRegion Chunk::ConsumeDirtyRegion()
 
 void Chunk::RecountSolids()
 {
+    if (materials_.empty())
+    {
+        solidCount_ = IsSolid(static_cast<Material>(uniform_)) ? static_cast<uint32_t>(voxelCount_) : 0u;
+        return;
+    }
     uint32_t n = 0;
     for (uint8_t m : materials_)
         n += IsSolid(static_cast<Material>(m)) ? 1u : 0u;
@@ -66,7 +102,21 @@ void Chunk::HashContentInto(Hasher& h) const
 {
     h.Chunk(coord_);
     h.U32(size_);
-    h.Bytes(materials_.data(), materials_.size());
+    if (!materials_.empty())
+    {
+        h.Bytes(materials_.data(), materials_.size());
+        return;
+    }
+    // The same byte sequence a dense array of the uniform material would hash.
+    uint8_t block[4096];
+    for (uint8_t& b : block)
+        b = uniform_;
+    for (size_t left = voxelCount_; left > 0;)
+    {
+        const size_t n = left < sizeof(block) ? left : sizeof(block);
+        h.Bytes(block, n);
+        left -= n;
+    }
 }
 
 void Chunk::Serialize(ByteWriter& w) const
@@ -78,6 +128,13 @@ void Chunk::Serialize(ByteWriter& w) const
     w.U64(version_);
 
     // Run-length encode: (material u8, run length u32). Count runs first for a fixed-size prefix.
+    if (materials_.empty())
+    {
+        w.U32(1); // a uniform chunk is exactly one run, as its dense array would encode
+        w.U8(uniform_);
+        w.U32(static_cast<uint32_t>(voxelCount_));
+        return;
+    }
     uint32_t runCount = 0;
     {
         size_t i = 0;
@@ -128,10 +185,27 @@ ResultCode Chunk::Deserialize(ByteReader& r, uint32_t expectedChunkSize, Chunk& 
         return ResultCode::SerializationTruncated;
     if (size != expectedChunkSize || size != out.size_)
         return ResultCode::SerializationCorrupt;
-    if (runCount == 0 || runCount > out.materials_.size())
+    if (runCount == 0 || runCount > out.voxelCount_)
         return ResultCode::SerializationCorrupt;
 
     out.coord_ = coord;
+    if (runCount == 1)
+    {
+        // A single run covering the chunk stays uniform; no voxel array is allocated.
+        uint8_t m = 0;
+        uint32_t len = 0;
+        if (!r.U8(m) || !r.U32(len))
+            return ResultCode::SerializationTruncated;
+        if (!IsValidMaterial(m) || len != out.voxelCount_)
+            return ResultCode::SerializationCorrupt;
+        std::vector<uint8_t>().swap(out.materials_);
+        out.uniform_ = m;
+        out.version_ = version;
+        out.dirty_.Reset();
+        out.RecountSolids();
+        return ResultCode::Ok;
+    }
+    out.materials_.assign(out.voxelCount_, static_cast<uint8_t>(Material::Air));
     size_t pos = 0;
     for (uint32_t run = 0; run < runCount; ++run)
     {
@@ -151,6 +225,7 @@ ResultCode Chunk::Deserialize(ByteReader& r, uint32_t expectedChunkSize, Chunk& 
     out.version_ = version;
     out.dirty_.Reset();
     out.RecountSolids();
+    out.Compact(); // several runs can still be one material
     return ResultCode::Ok;
 }
 

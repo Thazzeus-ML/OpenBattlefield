@@ -53,7 +53,10 @@ struct DirtyRegion
     }
 };
 
-/// Dense material grid for one chunk. The baseline terrain representation (see Docs/terrain.md).
+/// Material grid for one chunk (see Docs/terrain.md). A chunk whose voxels all hold the same material
+/// is stored as that one value with no voxel array ("uniform"); the first change that breaks the
+/// uniformity allocates the dense array, and Compact() frees it again. Content, hashes and the
+/// serialized form do not depend on which representation is in use.
 ///
 /// Ownership and lifecycle: chunks are owned exclusively by a TerrainWorld. They are never shared
 /// between threads; worker threads receive immutable ChunkMeshInput snapshots instead.
@@ -67,7 +70,7 @@ public:
 
     const ChunkCoord& Coord() const { return coord_; }
     uint32_t Size() const { return size_; }
-    size_t VoxelCount() const { return materials_.size(); }
+    size_t VoxelCount() const { return voxelCount_; }
 
     /// Number of times this chunk's authoritative content has changed since generation.
     ChunkVersion Version() const { return version_; }
@@ -76,9 +79,20 @@ public:
 
     Material Get(const LocalCoord& c) const
     {
-        return static_cast<Material>(materials_[LocalIndex(c, size_)]);
+        return static_cast<Material>(materials_.empty() ? uniform_ : materials_[LocalIndex(c, size_)]);
     }
-    Material GetAt(size_t index) const { return static_cast<Material>(materials_[index]); }
+    Material GetAt(size_t index) const
+    {
+        return static_cast<Material>(materials_.empty() ? uniform_ : materials_[index]);
+    }
+
+    /// True while every voxel holds UniformMaterial() and no voxel array is allocated.
+    bool IsUniform() const { return materials_.empty(); }
+    /// The material of every voxel while IsUniform().
+    Material UniformMaterial() const { return static_cast<Material>(uniform_); }
+    /// Frees the voxel array if every voxel holds the same material. Returns true if the chunk is
+    /// uniform afterwards. Called after generation and deserialization.
+    bool Compact();
 
     /// Sets a voxel without touching version or dirty state. Used by the generator. Returns true if
     /// the stored value changed.
@@ -95,7 +109,7 @@ public:
     /// Number of non-Air voxels.
     uint32_t SolidCount() const { return solidCount_; }
     bool IsAllAir() const { return solidCount_ == 0; }
-    bool IsAllSolid() const { return solidCount_ == materials_.size(); }
+    bool IsAllSolid() const { return solidCount_ == voxelCount_; }
 
     const DirtyRegion& Dirty() const { return dirty_; }
     bool HasDirtyRegion() const { return dirty_.any; }
@@ -109,9 +123,9 @@ public:
         dirty_.Include(max);
     }
 
-    /// Direct access to the dense material array (X fastest). Intended for the generator and for
-    /// snapshot creation; mutation through this pointer bypasses bookkeeping and is forbidden.
-    const uint8_t* Data() const { return materials_.data(); }
+    /// Direct access to the dense material array (X fastest), or nullptr while IsUniform(). Intended
+    /// for snapshot creation; mutation through this pointer bypasses bookkeeping and is forbidden.
+    const uint8_t* Data() const { return materials_.empty() ? nullptr : materials_.data(); }
 
     /// Recomputes the solid count from the material array. Called after bulk generation.
     void RecountSolids();
@@ -134,8 +148,13 @@ public:
     void SetVersionForDeserialization(ChunkVersion v) { version_ = v; }
 
 private:
+    /// Allocates the dense array filled with the uniform material, before a change that breaks it.
+    void Materialize();
+
     ChunkCoord coord_;
     uint32_t size_ = 0;
+    size_t voxelCount_ = 0;
+    uint8_t uniform_ = 0; // Material::Air; meaningful only while materials_ is empty
     ChunkVersion version_ = 0;
     uint32_t solidCount_ = 0;
     DirtyRegion dirty_;

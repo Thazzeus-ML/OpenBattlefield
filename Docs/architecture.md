@@ -30,7 +30,7 @@ Applications / Reference Game        (future: sample projects built on the plugi
 | Chunk identity | `TryPackChunkKey` | 21 bits per axis, stable 64-bit key |
 | Configuration | `WorldConfig` | Seed, generation version, chunk size, bounds, limits |
 | Procedural foundation | `ProceduralGenerator` | Integer value noise heightfield, layered materials, bedrock |
-| Terrain data | `Chunk` | Dense `uint8` material grid, solid count, version, dirty region |
+| Terrain data | `Chunk` | Dense `uint8` material grid (none while uniform), solid count, version, dirty region |
 | Modification | `TerrainOperation`, `ValidateOperation`, `TerrainWorld::ApplyOperation` | Validated, ordered, journaled |
 | Dirty tracking | `DirtyRegion`, `TerrainWorld::TakeDirtyChunks` | Per-chunk inclusive AABB + world-level sorted set |
 | Versioning | `Chunk::Version`, `TerrainWorld::Version` | Content versions for publication checks |
