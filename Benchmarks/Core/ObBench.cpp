@@ -224,6 +224,12 @@ std::vector<TerrainOperation> ArtillerySequence(const WorldConfig& cfg, uint32_t
     return ops;
 }
 
+uint64_t MeshBytes(const MeshData& m)
+{
+    return m.positions.size() * sizeof(float) + m.normals.size() * sizeof(float) + m.vertexMaterial.size() +
+           m.indices.size() * sizeof(uint32_t);
+}
+
 // Derived mesh state kept per chunk between flushes, as a renderer would keep it.
 struct MeshCache
 {
@@ -740,11 +746,19 @@ WorkloadResult RunResolution(const Params& p)
             [&](const Chunk& c)
             {
                 faces += MeshChunk(world, c.Coord(), cache);
-                meshBytes += cache.mesh.positions.size() * sizeof(float) +
-                             cache.mesh.normals.size() * sizeof(float) + cache.mesh.vertexMaterial.size() +
-                             cache.mesh.indices.size() * sizeof(uint32_t);
+                meshBytes += MeshBytes(cache.mesh);
             });
         r.AddSeries(pre + "mesh_all_ns").samplesNs.push_back(static_cast<double>(tm.ElapsedNs()));
+        // The same surface as greedy quads, emitted from the face cache a renderer already keeps.
+        uint64_t quads = 0, greedyBytes = 0;
+        MeshData greedy;
+        ScopedTimer tq;
+        for (const auto& kv : cache.faces)
+        {
+            quads += EmitGreedyChunkMesh(kv.second, greedy);
+            greedyBytes += MeshBytes(greedy);
+        }
+        r.AddSeries(pre + "greedy_emit_all_ns").samplesNs.push_back(static_cast<double>(tq.ElapsedNs()));
         uint64_t faceCacheBytes = 0;
         for (const auto& kv : cache.faces)
             faceCacheBytes +=
@@ -795,6 +809,8 @@ WorkloadResult RunResolution(const Params& p)
         r.integers[pre + "faces_after_craters"] = facesAfter;
         r.integers[pre + "mesh_bytes"] = meshBytes;
         r.integers[pre + "face_cache_bytes"] = faceCacheBytes;
+        r.integers[pre + "greedy_quads"] = quads;
+        r.integers[pre + "greedy_mesh_bytes"] = greedyBytes;
         r.integers[pre + "changed_voxels"] = changed;
         r.integers[pre + "allocated_bytes"] = ad.Bytes();
         r.hashes[pre + "state_hash"] = world.ComputeStateHash();

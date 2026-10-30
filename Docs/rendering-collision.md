@@ -7,6 +7,14 @@ Rendering and collision are **derived** from authoritative terrain. They never d
 * Core: `BuildChunkMesh` produces a face-culled cube mesh from a `ChunkMeshInput` snapshot. Faces on
   the chunk boundary are resolved using the snapshot's one-voxel border, so neighbouring chunks never
   show seams or duplicate faces.
+* Core: `EmitGreedyChunkMesh` turns a chunk's `ChunkFaces` into a greedy mesh: coplanar faces with
+  the same direction and material merge into maximal rectangles. It covers exactly the unit faces of
+  `BuildChunkMesh` with the same normals, materials and winding (`TestMesher.cpp` cuts every quad
+  back into unit faces and compares), with about 10x fewer quads on generated terrain. Merged quads
+  meet smaller ones at T-junctions, which a rasterizer can show as single-pixel cracks; none were
+  visible in the UE 5.8 host at 25 cm.
+* Adapter: `AOBTerrainActor::bGreedyMeshing` (default true) selects the greedy mesh; false emits one
+  quad per voxel face through `BuildChunkMesh`.
 * Adapter: `AOBTerrainActor` keeps one `UProceduralMeshComponent` per visible chunk and calls
   `CreateMeshSection_LinearColor(..., bCreateCollision)`. Render geometry and collision geometry are
   the same section, published in the same call.
@@ -51,7 +59,8 @@ Gaps in the current implementation, stated plainly:
 
 ## Future work
 
-* Greedy meshing and dirty-region-limited remeshing (the `DirtyRegion` AABB already exists).
+* Dirty-region-limited remeshing in the adapter (the core's `UpdateChunkFaces` already does it), and
+  a greedy mesh updated per dirty region instead of re-emitted per chunk.
 * Smooth surfaces (marching cubes / dual contouring) once a density layer exists.
 * LODs per chunk.
 * GPU-generated geometry: plugin-local shaders will be added only when there is a working compute

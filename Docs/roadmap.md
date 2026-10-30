@@ -59,7 +59,8 @@ that baseline:
 
 * ~~Uniform chunks (all air / all one material) stored without a voxel array.~~ Done: voxel memory
   at 3.125 cm drops from 67 MB to 24 MB (64 % of chunks are uniform).
-* Greedy meshing to cut faces and mesh memory per area.
+* ~~Greedy meshing to cut faces and mesh memory per area.~~ Done: `EmitGreedyChunkMesh`; mesh memory
+  at 3.125 cm drops from 104 MB to 9.9 MB (841 k faces to 80 k quads), emitted in 21 ms.
 * In-engine frame time and memory at 25, 12.5 and 6.25 cm in `Tools/UEHost`.
 
 ## Milestone 5 — Large-session scale

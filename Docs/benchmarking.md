@@ -46,6 +46,10 @@ dirty region; a chunk seen for the first time is meshed in full. `isolated_crate
 `boundary_crater` mesh their chunks before the crater, outside the timed region, so `dirty_flush_ns`
 measures an update of an already visible chunk. Older results measured a full remesh.
 
+`resolution` also emits a greedy mesh from every chunk's cached faces after the first meshing
+(`greedy_emit_all_ns`, `greedy_quads`, `greedy_mesh_bytes`), next to the per-face mesh's
+`faces_initial` and `mesh_bytes`.
+
 ## Measurement protocol
 
 * Fixed seed and parameters, recorded in the JSON (`params`). `bench_compare.py` refuses to compare

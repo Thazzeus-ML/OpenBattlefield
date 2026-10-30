@@ -56,6 +56,14 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield")
     bool bFlipWinding = true;
 
+    /**
+     * Merge coplanar faces of the same material into larger quads (ob::EmitGreedyChunkMesh): about 10x
+     * fewer triangles on terrain, same surface and collision. Merged quads meet smaller ones with
+     * T-junctions, which can show as single-pixel cracks; turn this off to emit one quad per voxel face.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield")
+    bool bGreedyMeshing = true;
+
     /** Upper bound on chunk mesh rebuilds per tick; the rest stay queued (and conservative). */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield", meta = (ClampMin = "1"))
     int32 MaxChunkRebuildsPerTick = 8;

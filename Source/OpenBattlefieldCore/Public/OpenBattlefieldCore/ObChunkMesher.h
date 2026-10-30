@@ -107,4 +107,11 @@ OBCORE_API size_t UpdateChunkFaces(const ChunkMeshInput& input, const LocalCoord
 /// Writes the mesh for faces into out: the same bytes BuildChunkMesh produces for the same snapshot.
 OBCORE_API void EmitChunkMesh(const ChunkFaces& faces, MeshData& out);
 
+/// Writes a greedy mesh for faces into out: coplanar faces with the same direction and material are
+/// merged into maximal rectangles, so a flat area of any size becomes a few quads. It covers exactly
+/// the surface EmitChunkMesh covers, with the same normals, materials and winding, and is
+/// deterministic. Merged quads meet smaller ones with T-junctions, which renderers may show as
+/// single-pixel cracks; collision is unaffected. Returns the number of quads.
+OBCORE_API size_t EmitGreedyChunkMesh(const ChunkFaces& faces, MeshData& out);
+
 } // namespace ob

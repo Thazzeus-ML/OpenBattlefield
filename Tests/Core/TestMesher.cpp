@@ -4,9 +4,11 @@
 #include "OpenBattlefieldCore/ObChunkMesher.h"
 #include "OpenBattlefieldCore/ObTerrainWorld.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
+#include <tuple>
 
 using namespace ob;
 
@@ -495,6 +497,133 @@ OB_TEST(IncrementalRemeshMatchesFullRebuild)
         OB_CHECK_EQ(mismatches, size_t(0));
         OB_CHECK(updates > 50); // the incremental path was exercised, not just the fallback
         OB_CHECK(rebuilds > 0);
+    }
+}
+
+namespace
+{
+// A mesh's quads (4 vertices each) cut back into unit voxel faces: (direction, voxel, material). Fails
+// the test if two quads cover the same unit face.
+using UnitFace = std::tuple<int, int32_t, int32_t, int32_t, uint8_t>;
+std::set<UnitFace> UnitFaces(const MeshData& mesh)
+{
+    std::set<UnitFace> out;
+    for (size_t q = 0; q * 4 < mesh.VertexCount(); ++q)
+    {
+        const float* p = &mesh.positions[q * 12];
+        const float* nrm = &mesh.normals[q * 12];
+        int a = 0;
+        while (nrm[a] == 0.0f)
+            ++a;
+        const int dir = a * 2 + (nrm[a] > 0.0f ? 0 : 1);
+        float lo[3], hi[3];
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            lo[axis] = std::min({p[axis], p[3 + axis], p[6 + axis], p[9 + axis]});
+            hi[axis] = std::max({p[axis], p[3 + axis], p[6 + axis], p[9 + axis]});
+        }
+        OB_CHECK(lo[a] == hi[a]);
+        // The voxel behind a +axis face starts one below the plane; behind a -axis face, at it.
+        lo[a] -= nrm[a] > 0.0f ? 1.0f : 0.0f;
+        hi[a] = lo[a] + 1.0f;
+        for (int32_t z = static_cast<int32_t>(lo[2]); z < static_cast<int32_t>(hi[2]); ++z)
+            for (int32_t y = static_cast<int32_t>(lo[1]); y < static_cast<int32_t>(hi[1]); ++y)
+                for (int32_t x = static_cast<int32_t>(lo[0]); x < static_cast<int32_t>(hi[0]); ++x)
+                    OB_CHECK(out.emplace(dir, x, y, z, mesh.vertexMaterial[q * 4]).second);
+    }
+    return out;
+}
+
+// Checks that the greedy mesh of in covers exactly the reference mesh's faces; returns its quads.
+size_t CheckGreedy(const ChunkMeshInput& in)
+{
+    MeshData reference, greedy, again;
+    const size_t faceCount = BuildChunkMesh(in, reference);
+    ChunkFaces faces;
+    BuildChunkFaces(in, faces);
+    const size_t quads = EmitGreedyChunkMesh(faces, greedy);
+    OB_CHECK_EQ(greedy.VertexCount(), quads * 4);
+    OB_CHECK_EQ(greedy.TriangleCount(), quads * 2);
+    OB_CHECK(quads <= faceCount);
+    CheckWinding(greedy);
+    OB_CHECK(UnitFaces(greedy) == UnitFaces(reference));
+    EmitGreedyChunkMesh(faces, again);
+    OB_CHECK(again.positions == greedy.positions && again.indices == greedy.indices &&
+             again.vertexMaterial == greedy.vertexMaterial);
+    return quads;
+}
+} // namespace
+
+OB_TEST(GreedyMeshMergesFlatAreasAndCoversTheSameSurface)
+{
+    // A solid chunk surrounded by air is six quads, one per side.
+    ChunkMeshInput cube = EmptyInput(8);
+    for (int32_t z = 0; z < 8; ++z)
+        for (int32_t y = 0; y < 8; ++y)
+            for (int32_t x = 0; x < 8; ++x)
+                Set(cube, x, y, z, Material::Rock);
+    OB_CHECK_EQ(CheckGreedy(cube), size_t(6));
+
+    // Faces of different materials are never merged: a slab half Soil, half Grass has two top quads.
+    ChunkMeshInput slab = EmptyInput(8);
+    for (int32_t y = 0; y < 8; ++y)
+        for (int32_t x = 0; x < 8; ++x)
+            Set(slab, x, y, 0, x < 4 ? Material::Soil : Material::Grass);
+    Set(slab, 0, 0, -1, Material::Rock); // solid below: hides one bottom face, splitting that side
+    const size_t slabQuads = CheckGreedy(slab);
+    OB_CHECK(slabQuads > 6);
+
+    // A single voxel and an empty chunk.
+    ChunkMeshInput one = EmptyInput(8);
+    Set(one, 7, 0, 3, Material::Grass);
+    OB_CHECK_EQ(CheckGreedy(one), size_t(6));
+    OB_CHECK_EQ(CheckGreedy(EmptyInput(8)), size_t(0));
+
+    // Bad faces emit nothing.
+    ChunkFaces none;
+    MeshData mesh;
+    OB_CHECK_EQ(EmitGreedyChunkMesh(none, mesh), size_t(0));
+    OB_CHECK_EQ(mesh.VertexCount(), size_t(0));
+}
+
+OB_TEST(GreedyMeshOfCrateredTerrainCoversTheSameSurfaceWithFewerQuads)
+{
+    for (uint32_t chunkSize : {8u, 16u, 32u})
+    {
+        WorldConfig cfg;
+        cfg.chunkSize = chunkSize;
+        cfg.minChunk = ChunkCoord(-4, -4, -4);
+        cfg.maxChunk = ChunkCoord(3, 3, 3);
+        cfg.baseHeight = 2;
+        cfg.heightAmplitude = 6;
+        cfg.bedrockHeight = -60;
+        cfg.maxOperationRadius = 16;
+        TerrainWorld world(cfg);
+        for (int i = 0; i < 6; ++i)
+        {
+            TerrainOperation op;
+            op.operationId = op.sequenceNumber = static_cast<uint64_t>(i + 1);
+            op.worldId = cfg.worldId;
+            op.type = i % 3 == 2 ? OperationType::AddSphere : OperationType::SubtractSphere;
+            const int64_t x = (i * 7) % 13 - 6, y = (i * 5) % 11 - 5;
+            op.center = VoxelCoord(x, y, world.Generator().SurfaceHeight(x, y));
+            op.radius = 3 + static_cast<uint32_t>(i);
+            if (op.type == OperationType::AddSphere)
+                op.material = Material::Rock;
+            OB_REQUIRE(world.ApplyOperation(op).Accepted());
+        }
+        size_t faces = 0, quads = 0;
+        world.ForEachChunk(
+            [&](const Chunk& chunk)
+            {
+                ChunkMeshInput in;
+                OB_REQUIRE(Succeeded(world.BuildMeshInput(chunk.Coord(), in)));
+                MeshData reference;
+                faces += BuildChunkMesh(in, reference);
+                quads += CheckGreedy(in);
+            });
+        OB_CHECK(faces > 0);
+        OB_CHECK(quads * 2 < faces); // terrain is mostly flat at this scale
     }
 }
 
