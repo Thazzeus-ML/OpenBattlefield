@@ -59,6 +59,14 @@ All notable changes to this project are documented here. The format follows
 * `Tools/UEHost`: `AOBResolutionGameMode` measures load time, memory, triangles, frame and GPU time and
   crater remesh latency of the `resolution` scene at 25, 12.5 and 6.25 cm, greedy on or off
   (`-OBVoxelCm=`, `-OBGreedy=`); results in `Docs/status.md`.
+* Off-game-thread remeshing: `ob::RemeshScheduler` keeps one meshing job in flight per chunk, tickets
+  every job and accepts a result only from the chunk's current job, so results from before a reset or
+  `EndPlay` are dropped and a chunk changed mid-job is meshed again. `AOBTerrainActor` snapshots on the
+  game thread, meshes on `UE::Tasks` workers and publishes on the game thread (`bAsyncRemesh`, default
+  true; false keeps the synchronous reference path). Meshing leaves the crater frame and loads are
+  10-25 % faster; the remaining crater hitch is synchronous collision cooking (`Docs/status.md`).
+  `AOBResolutionGameMode` takes `-OBAsync=` and `-OBCollision=`, reports the crater's game-thread time
+  per phase and runs at 3.125 cm.
 * `FOBTerrainWorldSettings` exposes `NoiseScaleLog2`, `NoiseOctaves`, `TopsoilDepth` and `SoilDepth`, so
   the same physical terrain can be generated at any power-of-two refinement of the voxel size.
 

@@ -81,6 +81,7 @@ set(OB_CORE_PUBLIC_HEADERS
   ${OB_CORE_DIR}/Public/OpenBattlefieldCore/ObHash.h
   ${OB_CORE_DIR}/Public/OpenBattlefieldCore/ObInstrumentation.h
   ${OB_CORE_DIR}/Public/OpenBattlefieldCore/ObProceduralGenerator.h
+  ${OB_CORE_DIR}/Public/OpenBattlefieldCore/ObRemeshScheduler.h
   ${OB_CORE_DIR}/Public/OpenBattlefieldCore/ObSerialization.h
   ${OB_CORE_DIR}/Public/OpenBattlefieldCore/ObTerrainOperation.h
   ${OB_CORE_DIR}/Public/OpenBattlefieldCore/ObTerrainWorld.h
@@ -94,6 +95,7 @@ set(OB_CORE_SOURCES
   ${OB_CORE_DIR}/Private/ObCoordinates.cpp
   ${OB_CORE_DIR}/Private/ObHash.cpp
   ${OB_CORE_DIR}/Private/ObProceduralGenerator.cpp
+  ${OB_CORE_DIR}/Private/ObRemeshScheduler.cpp
   ${OB_CORE_DIR}/Private/ObSerialization.cpp
   ${OB_CORE_DIR}/Private/ObTerrainOperation.cpp
   ${OB_CORE_DIR}/Private/ObTerrainWorld.cpp

@@ -33,7 +33,8 @@ Built and run on UE 5.8.2 (Windows), see `status.md`:
 ## Milestone 2 — Derived-data cost proportional to change
 
 * Dirty-region-limited remeshing, greedy meshing, border cache for `BuildMeshInput`.
-* Off-game-thread remeshing with version-checked publication (`OBScheduling` seed).
+* ~~Off-game-thread remeshing with version-checked publication (`OBScheduling` seed).~~ Done in the
+  Unreal adapter (`ob::RemeshScheduler`); collision cooking is still on the game thread.
 * Target: flush cost in the `artillery` workload (repeated overlapping impacts) scales with changed
   voxels, not with chunk count. Measured against
   the Milestone 0 baseline on the same machine.
@@ -65,8 +66,12 @@ that baseline:
   (`AOBResolutionGameMode`, results in `status.md`): 6.25 cm over 32 m loads in about 2.1 s and
   renders at 8-9 ms per frame with greedy meshes. A crater is a 15-57 ms single-frame hitch at every
   resolution because the actor remeshes synchronously.
-* Next: remesh craters off the game thread with version-checked publication (Milestone 2), then
-  repeat the in-engine sweep, adding 3.125 cm.
+* ~~Remesh craters off the game thread with version-checked publication, and repeat the in-engine
+  sweep adding 3.125 cm.~~ Done (`ob::RemeshScheduler`, `bAsyncRemesh`): meshing leaves the crater
+  frame; 3.125 cm over 32 m loads in about 10 s and renders at 14 ms per frame. The crater frame is now
+  synchronous collision cooking: about 17 ms at 6.25 cm and 100 ms at 3.125 cm.
+* Next: cook collision off the game thread and publish render and collision together, then fewer
+  chunk components (larger render chunks or merged sections) for the 14 ms steady frame at 3.125 cm.
 
 ## Milestone 5 — Large-session scale
 

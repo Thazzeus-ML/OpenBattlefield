@@ -7,18 +7,22 @@
 #include "GameFramework/Actor.h"
 
 #include "OBTerrainTypes.h"
+#include "OpenBattlefieldCore/ObRemeshScheduler.h"
 
 #include "OBTerrainActor.generated.h"
 
 class UProceduralMeshComponent;
 class UMaterialInterface;
+struct FOBRemeshCompletions;
+struct FOBRemeshResult;
 
 /**
- * Reference presentation of a terrain world: one UProceduralMeshComponent per visible chunk, rebuilt
- * synchronously on the game thread from core snapshots (the "synchronous reference path" of
- * Docs/concurrency.md). Render and collision geometry come from the same section, so for any
- * published chunk they are always consistent with each other; a chunk that is still queued keeps its
- * previous (conservative) geometry for both.
+ * Reference presentation of a terrain world: one UProceduralMeshComponent per visible chunk. The game
+ * thread takes an immutable snapshot of each changed chunk; meshing runs on a worker task and the result
+ * is published back on the game thread only if it is still the newest one for that chunk
+ * (ob::RemeshScheduler, Docs/concurrency.md). Render and collision geometry come from the same section,
+ * so for any published chunk they are always consistent with each other; a chunk that is queued or being
+ * meshed keeps its previous (conservative) geometry for both.
  *
  * Place one in a level, set Settings, and call ApplyCrater from gameplay code or Blueprint.
  */
@@ -64,7 +68,14 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield")
     bool bGreedyMeshing = true;
 
-    /** Upper bound on chunk mesh rebuilds per tick; the rest stay queued (and conservative). */
+    /**
+     * Mesh changed chunks on worker tasks (true) or synchronously on the game thread (false, the reference
+     * path). Either way geometry is published on the game thread.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield")
+    bool bAsyncRemesh = true;
+
+    /** Upper bound on chunk snapshots started per tick; the rest stay queued (and conservative). */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield", meta = (ClampMin = "1"))
     int32 MaxChunkRebuildsPerTick = 8;
 
@@ -73,9 +84,22 @@ public:
     UFUNCTION(BlueprintCallable, Category = "OpenBattlefield|Terrain")
     bool ApplyCrater(FVector WorldLocation, float RadiusCm);
 
-    /** Number of chunks waiting for a mesh rebuild. */
+    /** Number of chunks waiting for a mesh rebuild or being meshed. */
     UFUNCTION(BlueprintCallable, Category = "OpenBattlefield|Terrain")
-    int32 GetPendingRebuildCount() const { return PendingRebuilds.Num(); }
+    int32 GetPendingRebuildCount() const { return static_cast<int32>(Scheduler.PendingCount()); }
+
+    /** Chunk meshes published since BeginPlay; grows by one per published result. */
+    UFUNCTION(BlueprintCallable, Category = "OpenBattlefield|Terrain")
+    int64 GetPublishedChunkCount() const { return PublishedChunkCount; }
+
+    /** Game-thread time spent taking chunk snapshots since BeginPlay (seconds). */
+    double GetSnapshotSeconds() const { return SnapshotSeconds; }
+
+    /** Game-thread time spent meshing (synchronous path only) since BeginPlay (seconds). */
+    double GetInlineMeshSeconds() const { return InlineMeshSeconds; }
+
+    /** Game-thread time spent publishing mesh sections, collision cooking included, since BeginPlay. */
+    double GetPublishSeconds() const { return PublishSeconds; }
 
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -83,18 +107,31 @@ public:
 
 private:
     void EnqueueInitialChunks();
-    void ProcessRebuildQueue();
-    bool RebuildChunk(const FIntVector& ChunkCoord);
+    void StartRemeshJobs();
+    void PublishCompletedJobs();
+    /** Snapshots a chunk and meshes it (on a worker or inline); false if it needed no work. */
+    bool StartRemesh(const FIntVector& ChunkCoord, uint64 Ticket);
+    void Publish(FOBRemeshResult& Result);
     UProceduralMeshComponent* GetOrCreateChunkMesh(const FIntVector& ChunkCoord);
     bool IsChunkVisible(const FIntVector& ChunkCoord) const;
 
     UPROPERTY(Transient)
     TMap<FIntVector, TObjectPtr<UProceduralMeshComponent>> ChunkMeshes;
 
-    /** Core chunk version last published to each mesh component (version-checked publication). */
+    /** Core chunk version last published to each mesh component. */
     TMap<FIntVector, uint64> PublishedVersions;
 
-    /** FIFO of chunks needing a rebuild, deduplicated. */
-    TArray<FIntVector> PendingRebuilds;
-    TSet<FIntVector> PendingSet;
+    int64 PublishedChunkCount = 0;
+    double SnapshotSeconds = 0.0;
+    double InlineMeshSeconds = 0.0;
+    double PublishSeconds = 0.0;
+
+    /** Which chunks wait for a remesh, which are being meshed, and which results may be published. */
+    ob::RemeshScheduler Scheduler;
+
+    /**
+     * Worker jobs push results here (defined in the .cpp). Jobs hold a reference, never the actor, so a
+     * job that finishes after EndPlay writes into a queue nobody reads (EndPlay swaps in a fresh one).
+     */
+    TSharedPtr<FOBRemeshCompletions, ESPMode::ThreadSafe> Completions;
 };

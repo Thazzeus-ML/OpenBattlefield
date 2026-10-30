@@ -42,20 +42,22 @@ The policy must be decided before any asynchronous collision update is attempted
 2. **Conservative while pending.** Until a dirty chunk is rebuilt, it keeps its previous geometry for
    both rendering and collision. Old solid stays solid (players cannot fall through terrain that
    looks solid); a removed obstruction stays visible until the rebuild. `MaxChunkRebuildsPerTick`
-   bounds the work per frame, so pending state is visible as "the crater appears next frame", never as
-   a render/collision mismatch.
+   bounds the snapshots started per frame and meshing runs on worker tasks, so pending state is
+   visible as "the crater appears a frame or two later", never as a render/collision mismatch.
 3. **Server collision is authoritative.** Gameplay collision decisions happen on the server against
    its own published geometry. Client geometry is for presentation and prediction.
-4. **Versioned.** Published geometry records the chunk version it came from. A future async path
-   must drop stale results (see `concurrency.md`).
+4. **Versioned.** Published geometry records the chunk version it came from, and only the result of
+   a chunk's current meshing job is published; stale results are dropped (`ob::RemeshScheduler`, see
+   `concurrency.md`).
 
 Gaps in the current implementation, stated plainly:
 
 * Collision uses the render mesh. Collision generation independent of render detail (coarser
   collision, finer render) is not implemented.
 * Incremental collision reconstruction is not implemented; the whole chunk section is recooked
-  synchronously. `bUseAsyncCooking` is deliberately off so the policy above holds.
-* Nothing has been measured in-engine yet.
+  synchronously on the game thread when it is published (meshing itself runs on a worker).
+  `bUseAsyncCooking` is deliberately off so the policy above holds.
+* In-engine measurements are in `status.md` (resolution in engine).
 
 ## Future work
 

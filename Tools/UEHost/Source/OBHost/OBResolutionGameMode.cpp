@@ -67,6 +67,12 @@ void AOBResolutionGameMode::BeginPlay()
     int32 Greedy = 1;
     FParse::Value(FCommandLine::Get(), TEXT("OBGreedy="), Greedy);
     bGreedy = Greedy != 0;
+    int32 Async = 1;
+    FParse::Value(FCommandLine::Get(), TEXT("OBAsync="), Async);
+    bAsync = Async != 0;
+    int32 Collision = 1;
+    FParse::Value(FCommandLine::Get(), TEXT("OBCollision="), Collision);
+    bCollision = Collision != 0;
     FParse::Value(FCommandLine::Get(), TEXT("OBFrames="), MeasureFrames);
 
     // Uncapped frames, so frame time measures the work and not the display.
@@ -89,7 +95,8 @@ void AOBResolutionGameMode::BeginPlay()
     if (APlayerController* PC = World->GetFirstPlayerController())
         PC->SetViewTarget(Camera);
 
-    UE_LOG(LogTemp, Display, TEXT("OBResolution: voxel %.3f cm, greedy %d"), VoxelCm, bGreedy ? 1 : 0);
+    UE_LOG(LogTemp, Display, TEXT("OBResolution: voxel %.3f cm, greedy %d, async %d"), VoxelCm,
+           bGreedy ? 1 : 0, bAsync ? 1 : 0);
 }
 
 void AOBResolutionGameMode::SpawnTerrain()
@@ -118,6 +125,8 @@ void AOBResolutionGameMode::SpawnTerrain()
     Terrain->VisibleChunkRadiusZ = RadiusZ;
     Terrain->MaxChunkRebuildsPerTick = 100000; // load everything as fast as possible: measures throughput
     Terrain->bGreedyMeshing = bGreedy;
+    Terrain->bAsyncRemesh = bAsync;
+    Terrain->bGenerateCollision = bCollision;
     Terrain->FinishSpawning(FTransform(kTerrainOrigin));
 }
 
@@ -197,13 +206,25 @@ void AOBResolutionGameMode::Tick(float DeltaSeconds)
         GpuMs.Add(FPlatformTime::ToMilliseconds64(RHIGetGPUFrameCycles(0)));
         if (FrameMs.Num() >= MeasureFrames)
         {
-            // A 1.5 m crater in the middle, as in the core benchmark.
-            FVector Top = kTerrainOrigin + FVector(0.0, 0.0, 1000.0);
-            FHitResult Hit;
-            FCollisionQueryParams Query(TEXT("OBResolutionTrace"), true);
-            if (GetWorld()->LineTraceSingleByChannel(Hit, Top, kTerrainOrigin - FVector(0.0, 0.0, 1000.0),
-                                                     ECC_Visibility, Query))
-                Top = Hit.ImpactPoint;
+            // A 1.5 m crater in the middle, as in the core benchmark, on the core's surface (found without
+            // a collision trace, so it lands in the same place with -OBCollision=0).
+            FVector Top = kTerrainOrigin;
+            if (const UOBTerrainWorldSubsystem* Sub = GetWorld()->GetSubsystem<UOBTerrainWorldSubsystem>())
+                if (const ob::TerrainWorld* Core = Sub->GetCoreWorld())
+                {
+                    const ob::VoxelCoord V = Sub->WorldToVoxel(kTerrainOrigin);
+                    const int64 Range = FMath::CeilToInt64(kHalfHeightCm / VoxelCm);
+                    for (int64 Z = V.z + Range; Z >= V.z - Range; --Z)
+                        if (Core->SampleMaterial(ob::VoxelCoord(V.x, V.y, Z)) != ob::Material::Air)
+                        {
+                            Top.Z += static_cast<double>(Z + 1 - V.z) * VoxelCm;
+                            break;
+                        }
+                }
+            SnapshotSecondsBefore = Terrain->GetSnapshotSeconds();
+            InlineMeshSecondsBefore = Terrain->GetInlineMeshSeconds();
+            PublishSecondsBefore = Terrain->GetPublishSeconds();
+            PublishedBeforeCrater = Terrain->GetPublishedChunkCount();
             bCraterAccepted = Terrain->ApplyCrater(Top, 150.0f);
             Advance(EPhase::Crater);
         }
@@ -212,13 +233,24 @@ void AOBResolutionGameMode::Tick(float DeltaSeconds)
         // Time from ApplyCrater until every affected chunk is republished, and the worst frame.
         CraterWorstFrameMs = FMath::Max(CraterWorstFrameMs, FrameMsNow);
         ++CraterFrames;
-        if (Terrain->GetPendingRebuildCount() == 0)
+        // Done once the crater's chunks are published (the terrain actor may tick before or after this
+        // game mode, and on the synchronous path it publishes within its own tick) or it was rejected.
+        // The timeout keeps a broken run from hanging a sweep; it is reported.
+        bCraterTimedOut = CraterFrames > 2000;
+        if (bCraterTimedOut ||
+            ((!bCraterAccepted || Terrain->GetPublishedChunkCount() > PublishedBeforeCrater) &&
+             Terrain->GetPendingRebuildCount() == 0))
         {
             CraterSeconds = Now - PhaseStartSeconds;
+            CraterSnapshotMs = (Terrain->GetSnapshotSeconds() - SnapshotSecondsBefore) * 1000.0;
+            CraterInlineMeshMs = (Terrain->GetInlineMeshSeconds() - InlineMeshSecondsBefore) * 1000.0;
+            CraterPublishMs = (Terrain->GetPublishSeconds() - PublishSecondsBefore) * 1000.0;
             Report();
             const FString Path = FPaths::Combine(
                 FPaths::ProjectSavedDir(), TEXT("Resolution"),
-                FString::Printf(TEXT("%gcm-%s.png"), VoxelCm, bGreedy ? TEXT("greedy") : TEXT("faces")));
+                FString::Printf(TEXT("%gcm-%s-%s%s.png"), VoxelCm, bGreedy ? TEXT("greedy") : TEXT("faces"),
+                                bAsync ? TEXT("async") : TEXT("sync"),
+                                bCollision ? TEXT("") : TEXT("-nocollision")));
             FScreenshotRequest::RequestScreenshot(Path, false, false);
             Advance(EPhase::Shot);
         }
@@ -240,15 +272,20 @@ void AOBResolutionGameMode::Report()
     const double Mb = 1024.0 * 1024.0;
     UE_LOG(
         LogTemp, Display,
-        TEXT("OBResolution: {\"voxel_cm\": %g, \"greedy\": %d, \"chunks_meshed\": %d, \"triangles\": %lld, "
+        TEXT("OBResolution: {\"voxel_cm\": %g, \"greedy\": %d, \"async\": %d, \"collision\": %d, "
+             "\"chunks_meshed\": %d, "
+             "\"triangles\": %lld, "
              "\"first_load_s\": %.3f, \"load_s\": %.3f, \"process_mb_delta\": %.1f, \"core_world_mb\": %.2f, "
              "\"frames\": %d, "
              "\"frame_ms_mean\": %.3f, \"frame_ms_p50\": %.3f, \"frame_ms_p95\": %.3f, \"gpu_ms_p50\": %.3f, "
              "\"gpu_ms_p95\": %.3f, \"crater_accepted\": %d, \"crater_remesh_ms\": %.2f, "
-             "\"crater_frames\": %d, \"crater_worst_frame_ms\": %.2f}"),
-        VoxelCm, bGreedy ? 1 : 0, MeshedChunks, Triangles, WarmLoadSeconds, LoadSeconds,
+             "\"crater_frames\": %d, \"crater_worst_frame_ms\": %.2f, \"crater_timed_out\": %d, "
+             "\"crater_snapshot_ms\": %.2f, \"crater_inline_mesh_ms\": %.2f, \"crater_publish_ms\": %.2f}"),
+        VoxelCm, bGreedy ? 1 : 0, bAsync ? 1 : 0, bCollision ? 1 : 0, MeshedChunks, Triangles,
+        WarmLoadSeconds, LoadSeconds,
         (static_cast<double>(UsedPhysicalLoaded) - static_cast<double>(UsedPhysicalBefore)) / Mb,
         static_cast<double>(CoreWorldBytes) / Mb, FrameMs.Num(), Mean(FrameMs), Percentile(FrameMs, 0.5),
         Percentile(FrameMs, 0.95), Percentile(GpuMs, 0.5), Percentile(GpuMs, 0.95), bCraterAccepted ? 1 : 0,
-        CraterSeconds * 1000.0, CraterFrames, CraterWorstFrameMs);
+        CraterSeconds * 1000.0, CraterFrames, CraterWorstFrameMs, bCraterTimedOut ? 1 : 0, CraterSnapshotMs,
+        CraterInlineMeshMs, CraterPublishMs);
 }
