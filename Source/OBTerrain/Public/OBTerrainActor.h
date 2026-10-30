@@ -92,6 +92,15 @@ public:
     UFUNCTION(BlueprintCallable, Category = "OpenBattlefield|Terrain")
     int64 GetPublishedChunkCount() const { return PublishedChunkCount; }
 
+    /** Game-thread time spent taking chunk snapshots since BeginPlay (seconds). */
+    double GetSnapshotSeconds() const { return SnapshotSeconds; }
+
+    /** Game-thread time spent meshing (synchronous path only) since BeginPlay (seconds). */
+    double GetInlineMeshSeconds() const { return InlineMeshSeconds; }
+
+    /** Game-thread time spent publishing mesh sections, collision cooking included, since BeginPlay. */
+    double GetPublishSeconds() const { return PublishSeconds; }
+
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void Tick(float DeltaSeconds) override;
@@ -113,6 +122,9 @@ private:
     TMap<FIntVector, uint64> PublishedVersions;
 
     int64 PublishedChunkCount = 0;
+    double SnapshotSeconds = 0.0;
+    double InlineMeshSeconds = 0.0;
+    double PublishSeconds = 0.0;
 
     /** Which chunks wait for a remesh, which are being meshed, and which results may be published. */
     ob::RemeshScheduler Scheduler;

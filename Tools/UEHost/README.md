@@ -28,7 +28,8 @@ relief, every generation length scaled with the voxel) at one voxel size, and lo
 UnrealEditor.exe <path>/OBHost.uproject /Engine/Maps/Templates/Template_Default?game=/Script/OBHost.OBResolutionGameMode -game -windowed -ResX=1600 -ResY=900 -log -OBVoxelCm=12.5 -OBGreedy=1
 ```
 
-* `-OBVoxelCm=` 25, 12.5 or 6.25 (power-of-two refinements of 25 cm only); `-OBGreedy=` 1 or 0;
+* `-OBVoxelCm=` 25, 12.5, 6.25 or 3.125 (power-of-two refinements of 25 cm only); `-OBGreedy=` 1 or
+  0; `-OBAsync=` 1 (mesh on worker tasks, default) or 0 (on the game thread); `-OBCollision=` 1 or 0;
   `-OBFrames=` frames to time (default 300).
 * The terrain is loaded once to warm the engine up (`first_load_s`), destroyed and loaded again;
   `load_s`, `process_mb_delta` (physical memory) and `core_world_mb` describe the second load, with
@@ -36,5 +37,9 @@ UnrealEditor.exe <path>/OBHost.uproject /Engine/Maps/Templates/Template_Default?
 * Frame times are measured with VSync off and no frame cap from a fixed camera (`frame_ms_*`, game
   thread wall time per frame; `gpu_ms_*`, RHI GPU frame time).
 * A 1.5 m crater is then cut in the middle: `crater_remesh_ms` is the time until every affected chunk
-  is republished, `crater_worst_frame_ms` the slowest frame meanwhile. A screenshot lands in
+  is republished, `crater_worst_frame_ms` the slowest frame meanwhile, and `crater_snapshot_ms`,
+  `crater_inline_mesh_ms` and `crater_publish_ms` the terrain actor's game-thread time taking
+  snapshots, meshing (synchronous path only) and publishing sections (collision cooking included).
+  The crater is placed on the core's surface, so it lands in the same place with collision off; a run
+  that does not finish within 2000 frames reports `crater_timed_out`. A screenshot lands in
   `Saved/Resolution/`.

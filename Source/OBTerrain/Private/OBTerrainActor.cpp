@@ -5,6 +5,7 @@
 
 #include "Containers/Queue.h"
 #include "Engine/World.h"
+#include "HAL/PlatformTime.h"
 #include "Materials/MaterialInterface.h"
 #include "ProceduralMeshComponent.h"
 #include "Tasks/Task.h"
@@ -213,6 +214,7 @@ bool AOBTerrainActor::StartRemesh(const FIntVector& C, uint64 Ticket)
     UOBTerrainWorldSubsystem* Subsystem = GetWorld()->GetSubsystem<UOBTerrainWorldSubsystem>();
     ob::TerrainWorld* Core = Subsystem ? Subsystem->GetCoreWorld() : nullptr;
     const ob::ChunkCoord Coord = FOBCoordinates::ToChunkCoord(C);
+    const double SnapshotStart = FPlatformTime::Seconds();
     ob::Chunk* Chunk = nullptr;
     ob::ChunkMeshInput Input;
     bool bNeeded = Core && ob::Succeeded(Core->EnsureChunk(Coord, Chunk));
@@ -226,7 +228,9 @@ bool AOBTerrainActor::StartRemesh(const FIntVector& C, uint64 Ticket)
         bNeeded = bDirty || !Published || *Published != Chunk->Version() || !ChunkMeshes.Contains(C);
     }
     // The snapshot is taken here, on the game thread, which owns the core world.
-    if (!bNeeded || ob::Failed(Core->BuildMeshInput(Coord, Input)))
+    const bool bSnapshotTaken = bNeeded && ob::Succeeded(Core->BuildMeshInput(Coord, Input));
+    SnapshotSeconds += FPlatformTime::Seconds() - SnapshotStart;
+    if (!bSnapshotTaken)
     {
         Scheduler.Complete(Coord, Ticket); // nothing to publish; frees the chunk
         return false;
@@ -237,8 +241,10 @@ bool AOBTerrainActor::StartRemesh(const FIntVector& C, uint64 Ticket)
     const double VoxelSizeCm = Subsystem->GetVoxelSizeCm();
     if (!bAsyncRemesh)
     {
+        const double MeshStart = FPlatformTime::Seconds();
         FOBRemeshResult Result{C, Ticket, Input.version, {}};
         MeshSnapshot(Input, bGreedy, VoxelSizeCm, bFlip, Result.Buffers);
+        InlineMeshSeconds += FPlatformTime::Seconds() - MeshStart;
         Completions->Queue.Enqueue(MoveTemp(Result));
         return true;
     }
@@ -257,6 +263,7 @@ bool AOBTerrainActor::StartRemesh(const FIntVector& C, uint64 Ticket)
 void AOBTerrainActor::Publish(FOBRemeshResult& Result)
 {
     // Game thread only: Unreal mesh and collision state (rule 3).
+    const double PublishStart = FPlatformTime::Seconds();
     UProceduralMeshComponent* Mesh = GetOrCreateChunkMesh(Result.Chunk);
     FOBMeshBuffers& Buffers = Result.Buffers;
     if (Buffers.Vertices.Num() == 0)
@@ -273,4 +280,5 @@ void AOBTerrainActor::Publish(FOBRemeshResult& Result)
     // version N is never mistaken for version N+1.
     PublishedVersions.Add(Result.Chunk, Result.Version);
     ++PublishedChunkCount;
+    PublishSeconds += FPlatformTime::Seconds() - PublishStart;
 }

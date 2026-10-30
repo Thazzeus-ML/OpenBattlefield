@@ -13,7 +13,7 @@ class ACameraActor;
  * same physical scene as the core's `resolution` benchmark (a +/-2 m relief, 32 m across) at the voxel
  * size given by -OBVoxelCm= (25, 12.5 or 6.25), with greedy meshing on or off (-OBGreedy=1/0) and remeshing
  * on worker tasks or on the game thread
- * (-OBAsync=1/0). Logs
+ * (-OBAsync=1/0), with or without collision (-OBCollision=1/0). Logs
  * one line "OBResolution: {json}" with load time, memory, mesh size, frame times and crater remesh
  * latency, saves a screenshot and quits. Not part of the plugin.
  */
@@ -55,6 +55,7 @@ private:
     float VoxelCm = 25.0f;
     bool bGreedy = true;
     bool bAsync = true;
+    bool bCollision = true;
     int32 MeasureFrames = 300;
     int32 FramesInPhase = 0;
     double PhaseStartSeconds = 0.0;
@@ -75,4 +76,11 @@ private:
     bool bCraterAccepted = false;
     bool bCraterTimedOut = false;
     int64 PublishedBeforeCrater = 0;
+    // Terrain actor game-thread timers at ApplyCrater, and their growth until the crater is published.
+    double SnapshotSecondsBefore = 0.0;
+    double InlineMeshSecondsBefore = 0.0;
+    double PublishSecondsBefore = 0.0;
+    double CraterSnapshotMs = 0.0;
+    double CraterInlineMeshMs = 0.0;
+    double CraterPublishMs = 0.0;
 };
