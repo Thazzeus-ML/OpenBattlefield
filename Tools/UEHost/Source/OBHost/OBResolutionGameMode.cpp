@@ -73,6 +73,9 @@ void AOBResolutionGameMode::BeginPlay()
     int32 Collision = 1;
     FParse::Value(FCommandLine::Get(), TEXT("OBCollision="), Collision);
     bCollision = Collision != 0;
+    int32 AsyncCook = 1;
+    FParse::Value(FCommandLine::Get(), TEXT("OBAsyncCook="), AsyncCook);
+    bAsyncCook = AsyncCook != 0;
     FParse::Value(FCommandLine::Get(), TEXT("OBFrames="), MeasureFrames);
 
     // Uncapped frames, so frame time measures the work and not the display.
@@ -127,6 +130,7 @@ void AOBResolutionGameMode::SpawnTerrain()
     Terrain->bGreedyMeshing = bGreedy;
     Terrain->bAsyncRemesh = bAsync;
     Terrain->bGenerateCollision = bCollision;
+    Terrain->bAsyncCollisionCooking = bAsyncCook;
     Terrain->FinishSpawning(FTransform(kTerrainOrigin));
 }
 
@@ -246,11 +250,12 @@ void AOBResolutionGameMode::Tick(float DeltaSeconds)
             CraterInlineMeshMs = (Terrain->GetInlineMeshSeconds() - InlineMeshSecondsBefore) * 1000.0;
             CraterPublishMs = (Terrain->GetPublishSeconds() - PublishSecondsBefore) * 1000.0;
             Report();
-            const FString Path = FPaths::Combine(
-                FPaths::ProjectSavedDir(), TEXT("Resolution"),
-                FString::Printf(TEXT("%gcm-%s-%s%s.png"), VoxelCm, bGreedy ? TEXT("greedy") : TEXT("faces"),
-                                bAsync ? TEXT("async") : TEXT("sync"),
-                                bCollision ? TEXT("") : TEXT("-nocollision")));
+            const FString Path = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Resolution"),
+                                                 FString::Printf(TEXT("%gcm-%s-%s%s%s.png"), VoxelCm,
+                                                                 bGreedy ? TEXT("greedy") : TEXT("faces"),
+                                                                 bAsync ? TEXT("async") : TEXT("sync"),
+                                                                 bCollision ? TEXT("") : TEXT("-nocollision"),
+                                                                 bAsyncCook ? TEXT("") : TEXT("-synccook")));
             FScreenshotRequest::RequestScreenshot(Path, false, false);
             Advance(EPhase::Shot);
         }
@@ -273,6 +278,7 @@ void AOBResolutionGameMode::Report()
     UE_LOG(
         LogTemp, Display,
         TEXT("OBResolution: {\"voxel_cm\": %g, \"greedy\": %d, \"async\": %d, \"collision\": %d, "
+             "\"async_cook\": %d, "
              "\"chunks_meshed\": %d, "
              "\"triangles\": %lld, "
              "\"first_load_s\": %.3f, \"load_s\": %.3f, \"process_mb_delta\": %.1f, \"core_world_mb\": %.2f, "
@@ -281,8 +287,8 @@ void AOBResolutionGameMode::Report()
              "\"gpu_ms_p95\": %.3f, \"crater_accepted\": %d, \"crater_remesh_ms\": %.2f, "
              "\"crater_frames\": %d, \"crater_worst_frame_ms\": %.2f, \"crater_timed_out\": %d, "
              "\"crater_snapshot_ms\": %.2f, \"crater_inline_mesh_ms\": %.2f, \"crater_publish_ms\": %.2f}"),
-        VoxelCm, bGreedy ? 1 : 0, bAsync ? 1 : 0, bCollision ? 1 : 0, MeshedChunks, Triangles,
-        WarmLoadSeconds, LoadSeconds,
+        VoxelCm, bGreedy ? 1 : 0, bAsync ? 1 : 0, bCollision ? 1 : 0, bAsyncCook ? 1 : 0, MeshedChunks,
+        Triangles, WarmLoadSeconds, LoadSeconds,
         (static_cast<double>(UsedPhysicalLoaded) - static_cast<double>(UsedPhysicalBefore)) / Mb,
         static_cast<double>(CoreWorldBytes) / Mb, FrameMs.Num(), Mean(FrameMs), Percentile(FrameMs, 0.5),
         Percentile(FrameMs, 0.95), Percentile(GpuMs, 0.5), Percentile(GpuMs, 0.95), bCraterAccepted ? 1 : 0,

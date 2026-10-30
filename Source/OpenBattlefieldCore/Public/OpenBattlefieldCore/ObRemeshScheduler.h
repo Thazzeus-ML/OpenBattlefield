@@ -37,6 +37,14 @@ public:
     /// meanwhile it is queued again.
     bool Complete(ChunkCoord coord, uint64_t ticket);
 
+    /// True if the ticket is the chunk's in-flight ticket, i.e. Complete() would accept it. Lets the owner
+    /// keep a chunk in flight past the worker job, for example while its collision is cooked.
+    bool IsCurrent(ChunkCoord coord, uint64_t ticket) const
+    {
+        const auto it = m_inFlight.find(coord);
+        return it != m_inFlight.end() && it->second == ticket;
+    }
+
     /// Drops every queued request and every in-flight job; their results will not be publishable.
     /// Tickets keep growing so no result from before the reset can match a later job.
     void Reset();

@@ -13,7 +13,8 @@ class ACameraActor;
  * same physical scene as the core's `resolution` benchmark (a +/-2 m relief, 32 m across) at the voxel
  * size given by -OBVoxelCm= (25, 12.5 or 6.25), with greedy meshing on or off (-OBGreedy=1/0) and remeshing
  * on worker tasks or on the game thread
- * (-OBAsync=1/0), with or without collision (-OBCollision=1/0). Logs
+ * (-OBAsync=1/0), with or without collision (-OBCollision=1/0), cooked on a worker or the game thread
+ * (-OBAsyncCook=1/0). Logs
  * one line "OBResolution: {json}" with load time, memory, mesh size, frame times and crater remesh
  * latency, saves a screenshot and quits. Not part of the plugin.
  */
@@ -56,6 +57,7 @@ private:
     bool bGreedy = true;
     bool bAsync = true;
     bool bCollision = true;
+    bool bAsyncCook = true;
     int32 MeasureFrames = 300;
     int32 FramesInPhase = 0;
     double PhaseStartSeconds = 0.0;

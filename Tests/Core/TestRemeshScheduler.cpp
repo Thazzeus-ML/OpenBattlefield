@@ -33,11 +33,15 @@ OB_TEST(CompletionPublishesOnlyTheInFlightTicket)
     ChunkCoord c;
     uint64_t t = 0;
     OB_CHECK(s.TryStart(c, t));
+    OB_CHECK(s.IsCurrent(k, t));
+    OB_CHECK(!s.IsCurrent(k, t + 1));
+    OB_CHECK(!s.IsCurrent(ChunkCoord(0, 0, 0), t));
     OB_CHECK(!s.Complete(k, t + 1));               // not this chunk's ticket
     OB_CHECK(!s.Complete(ChunkCoord(0, 0, 0), t)); // not this chunk
     OB_CHECK(s.IsInFlight(k));
     OB_CHECK(s.Complete(k, t));
     OB_CHECK(!s.Complete(k, t)); // already completed
+    OB_CHECK(!s.IsCurrent(k, t));
     OB_CHECK_EQ(s.PendingCount(), size_t(0));
 }
 
@@ -88,6 +92,7 @@ OB_TEST(ResetDropsQueuedAndInFlightResults)
     uint64_t after = 0;
     OB_CHECK(s.TryStart(c, after));
     OB_CHECK(after > before);
+    OB_CHECK(!s.IsCurrent(k, before));
     OB_CHECK(!s.Complete(k, before));
     OB_CHECK(s.Complete(k, after));
     OB_CHECK_EQ(s.PendingCount(), size_t(0));
