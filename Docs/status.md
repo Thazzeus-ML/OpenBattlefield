@@ -26,7 +26,7 @@ Built as `Plugins/OpenBattlefield` in a minimal C++ host project and run in a pa
 | Server target | **Not built**: requires a source-built engine; the installed engine has no server target |
 | `AOBTerrainActor` in an empty level | Generates a 5 x 5 x 5 chunk area (32-voxel chunks, 25 cm voxels); renders solid with `bFlipWinding = true` |
 | `ApplyCrater` | Visible craters inside a chunk, on a chunk face and on a chunk corner; complex-collision line traces at each centre drop by 275 cm for a 300 cm crater (3/3) |
-| Walking into a crater with a character | Default `ACharacter` capsule (AI-controlled) walks into two craters, one centred on a chunk face so it ends on the seam between two chunks' collision: both end on ground, 17–18 cm from the centre, feet 2 cm above the traced floor, never lower (2/2, three runs; repeated with off-game-thread remeshing, now the default: 3/3 craters, 2/2 walks) |
+| Walking into a crater with a character | Default `ACharacter` capsule (AI-controlled) walks into two craters, one centred on a chunk face so it ends on the seam between two chunks' collision: both end on ground, 17–18 cm from the centre, feet 2 cm above the traced floor, never lower (2/2, three runs; repeated with off-game-thread remeshing and collision cooking, now the defaults, and with each of them off: 3/3 craters, 2/2 walks every time) |
 
 ### Resolution in engine
 
@@ -83,13 +83,33 @@ crater is placed on the core's surface so it is identical with collision off):
 * Off-game-thread meshing removes meshing from the crater frame and loads 10-25 % faster (meshing
   runs on several cores). Without collision the crater frame is at or near a normal frame at every
   size (6.8 ms at 6.25 cm, 16.9 ms at 3.125 cm where a normal frame is 14 ms).
-* **Collision cooking is now the hitch**: publishing a section cooks its collision synchronously on
-  the game thread (`bUseAsyncCooking` is off so render and collision change in the same frame), which
-  is 85-95 % of the crater frame with collision on: about 17 ms at 6.25 cm and 100 ms at 3.125 cm.
-  Cooking collision off the game thread while keeping render and collision atomic per chunk
-  (`rendering-collision.md`) is the next step.
+* With meshing off the game thread, synchronous collision cooking was 85-95 % of the crater frame:
+  about 17 ms at 6.25 cm and 100 ms at 3.125 cm.
 * At 3.125 cm the steady frame is 14 ms with 1380 chunk components, close to a 60 Hz budget before any
   crater.
+
+#### Off-game-thread collision cooking
+
+`bAsyncCollisionCooking` (default) cooks a republished chunk in a hidden staging component and swaps
+it in, render and collision together, once cooked; `-OBAsyncCook=0` cooks on the game thread. Both
+mesh on workers. Three alternating pairs per voxel size, ranges over the three runs:
+
+| voxel | load async cook | load sync cook | crater worst frame, async cook (3 frames) | sync cook (2 frames) | crater game-thread publish, async | sync |
+|---|---|---|---|---|---|---|
+| 25 cm | 0.06 s | 0.09-0.10 s | 4.2-5.7 ms | 10.2-11.6 ms | 1.3-1.5 ms | 6.7-8.6 ms |
+| 12.5 cm | 0.18 s | 0.27-0.31 s | 5.3-6.6 ms | 11.1-12.2 ms | 1.4-1.8 ms | 8.2-9.1 ms |
+| 6.25 cm | 0.97-1.15 s | 1.27-1.33 s | 6.9-8.6 ms | 21.1-22.6 ms | 3.5-4.2 ms | 16.8-16.9 ms |
+| 3.125 cm | 8.0-8.2 s | 9.5-10.0 s | 47-50 ms | 99-112 ms | 52-56 ms | 90-102 ms |
+
+* From 25 to 6.25 cm a crater now costs about one normal frame (steady frames are 4-6 ms): the
+  render and collision of the affected chunks change one or two frames later than before, together.
+* **At 3.125 cm the crater frame is per-component physics work.** The crater touches 36 chunks of 1 m.
+  Timing each step: staging costs about 0.27 ms per chunk (it was 1.1 ms before components were
+  configured before registration), and the swap about 1 ms per chunk, half creating the new physics
+  body and half removing the old one. Hiding the old component and disabling its collision costs as
+  much as destroying it, so deferring the destroy does not help. Fewer, larger chunks at fine voxel
+  sizes is the next step.
+* Loads are 20-35 % faster because collision cooks on several cores.
 
 Fixes the first build needed: the `.generated.h` include must be last (UHT); the core's export macro
 needed `DLLEXPORT`/`DLLIMPORT`, which only engine headers define; `bFlipWinding` must default to
@@ -97,7 +117,6 @@ true because core coordinates map directly onto Unreal's left-handed axes, mirro
 
 ## Deferred features (by design)
 
-* Asynchronous collision cooking (meshing is asynchronous; policy in `concurrency.md`, `rendering-collision.md`).
 * Client-side requests and replication (`networking.md`).
 * Smooth surfaces / density representation (`terrain.md`).
 * Editor module (`future-modules.md`).

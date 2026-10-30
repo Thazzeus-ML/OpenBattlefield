@@ -43,7 +43,15 @@ hold by shared reference, never through the actor. The game thread drains it at 
 tick, asks the scheduler whether each result is current and publishes the ones that are. The
 published version recorded per chunk is the snapshot's version, never the current chunk version, so a
 result computed against version N is never mistaken for version N+1. Unreal APIs that must run on the
-game thread (`CreateMeshSection_LinearColor`, collision cooking) are called only there.
+game thread (`CreateMeshSection_LinearColor`, component creation, physics state) are called only there.
+
+Collision is cooked on a worker too (`bAsyncCollisionCooking`, default true). A published result goes
+into a new, hidden staging component without collision whose `UBodySetup` is cooked asynchronously.
+The chunk stays in flight in the scheduler (`IsCurrent` is checked when the result arrives, `Complete`
+only at the swap), so it is not remeshed while it cooks. When the cooked body setup has been swapped
+into the staging component, the game thread shows it, enables its collision and destroys the chunk's
+previous component in the same frame. A cook that has not finished after 600 frames is redone
+synchronously rather than publishing geometry without collision.
 
 ## Cancellation and shutdown
 
