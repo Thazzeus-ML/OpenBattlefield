@@ -272,4 +272,5 @@ void AOBTerrainActor::Publish(FOBRemeshResult& Result)
     // The version the snapshot was taken from, never the current one, so a result computed against
     // version N is never mistaken for version N+1.
     PublishedVersions.Add(Result.Chunk, Result.Version);
+    ++PublishedChunkCount;
 }

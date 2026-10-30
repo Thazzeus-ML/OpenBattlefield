@@ -88,6 +88,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "OpenBattlefield|Terrain")
     int32 GetPendingRebuildCount() const { return static_cast<int32>(Scheduler.PendingCount()); }
 
+    /** Chunk meshes published since BeginPlay; grows by one per published result. */
+    UFUNCTION(BlueprintCallable, Category = "OpenBattlefield|Terrain")
+    int64 GetPublishedChunkCount() const { return PublishedChunkCount; }
+
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void Tick(float DeltaSeconds) override;
@@ -107,6 +111,8 @@ private:
 
     /** Core chunk version last published to each mesh component. */
     TMap<FIntVector, uint64> PublishedVersions;
+
+    int64 PublishedChunkCount = 0;
 
     /** Which chunks wait for a remesh, which are being meshed, and which results may be published. */
     ob::RemeshScheduler Scheduler;

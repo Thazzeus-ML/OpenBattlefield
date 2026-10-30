@@ -73,5 +73,6 @@ private:
     double CraterWorstFrameMs = 0.0;
     int32 CraterFrames = 0;
     bool bCraterAccepted = false;
-    bool bCraterSeenPending = false;
+    bool bCraterTimedOut = false;
+    int64 PublishedBeforeCrater = 0;
 };

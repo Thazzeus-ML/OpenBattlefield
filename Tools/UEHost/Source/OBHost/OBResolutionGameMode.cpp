@@ -209,6 +209,7 @@ void AOBResolutionGameMode::Tick(float DeltaSeconds)
             if (GetWorld()->LineTraceSingleByChannel(Hit, Top, kTerrainOrigin - FVector(0.0, 0.0, 1000.0),
                                                      ECC_Visibility, Query))
                 Top = Hit.ImpactPoint;
+            PublishedBeforeCrater = Terrain->GetPublishedChunkCount();
             bCraterAccepted = Terrain->ApplyCrater(Top, 150.0f);
             Advance(EPhase::Crater);
         }
@@ -217,10 +218,13 @@ void AOBResolutionGameMode::Tick(float DeltaSeconds)
         // Time from ApplyCrater until every affected chunk is republished, and the worst frame.
         CraterWorstFrameMs = FMath::Max(CraterWorstFrameMs, FrameMsNow);
         ++CraterFrames;
-        // The terrain actor may tick before or after this game mode, so wait until the crater's chunks
-        // have been seen queued (or a rejected crater), then until they are all published.
-        bCraterSeenPending = bCraterSeenPending || Terrain->GetPendingRebuildCount() != 0;
-        if ((bCraterSeenPending || !bCraterAccepted) && Terrain->GetPendingRebuildCount() == 0)
+        // Done once the crater's chunks are published (the terrain actor may tick before or after this
+        // game mode, and on the synchronous path it publishes within its own tick) or it was rejected.
+        // The timeout keeps a broken run from hanging a sweep; it is reported.
+        bCraterTimedOut = CraterFrames > 2000;
+        if (bCraterTimedOut ||
+            ((!bCraterAccepted || Terrain->GetPublishedChunkCount() > PublishedBeforeCrater) &&
+             Terrain->GetPendingRebuildCount() == 0))
         {
             CraterSeconds = Now - PhaseStartSeconds;
             Report();
@@ -255,10 +259,10 @@ void AOBResolutionGameMode::Report()
              "\"frames\": %d, "
              "\"frame_ms_mean\": %.3f, \"frame_ms_p50\": %.3f, \"frame_ms_p95\": %.3f, \"gpu_ms_p50\": %.3f, "
              "\"gpu_ms_p95\": %.3f, \"crater_accepted\": %d, \"crater_remesh_ms\": %.2f, "
-             "\"crater_frames\": %d, \"crater_worst_frame_ms\": %.2f}"),
+             "\"crater_frames\": %d, \"crater_worst_frame_ms\": %.2f, \"crater_timed_out\": %d}"),
         VoxelCm, bGreedy ? 1 : 0, bAsync ? 1 : 0, MeshedChunks, Triangles, WarmLoadSeconds, LoadSeconds,
         (static_cast<double>(UsedPhysicalLoaded) - static_cast<double>(UsedPhysicalBefore)) / Mb,
         static_cast<double>(CoreWorldBytes) / Mb, FrameMs.Num(), Mean(FrameMs), Percentile(FrameMs, 0.5),
         Percentile(FrameMs, 0.95), Percentile(GpuMs, 0.5), Percentile(GpuMs, 0.95), bCraterAccepted ? 1 : 0,
-        CraterSeconds * 1000.0, CraterFrames, CraterWorstFrameMs);
+        CraterSeconds * 1000.0, CraterFrames, CraterWorstFrameMs, bCraterTimedOut ? 1 : 0);
 }
