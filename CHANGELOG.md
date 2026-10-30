@@ -67,6 +67,13 @@ All notable changes to this project are documented here. The format follows
   10-25 % faster; the remaining crater hitch is synchronous collision cooking (`Docs/status.md`).
   `AOBResolutionGameMode` takes `-OBAsync=` and `-OBCollision=`, reports the crater's game-thread time
   per phase and runs at 3.125 cm.
+* Off-game-thread collision cooking: with `AOBTerrainActor::bAsyncCollisionCooking` (default true) a
+  republished chunk is cooked in a hidden staging component without collision and replaces the chunk's
+  component, render and collision together, once cooked; the chunk stays in flight until then
+  (`RemeshScheduler::IsCurrent`). Chunk components are configured before they are registered.
+  `AOBResolutionGameMode` takes `-OBAsyncCook=`; `AOBShowcaseGameMode` takes `-OBAsync=` and
+  `-OBAsyncCook=`. The worst crater frame drops from 19-23 ms to 7-9 ms at 6.25 cm and from about
+  100 ms to 47-50 ms at 3.125 cm (`Docs/status.md`).
 * `FOBTerrainWorldSettings` exposes `NoiseScaleLog2`, `NoiseOctaves`, `TopsoilDepth` and `SoilDepth`, so
   the same physical terrain can be generated at any power-of-two refinement of the voxel size.
 

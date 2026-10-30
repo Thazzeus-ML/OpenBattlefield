@@ -75,6 +75,15 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield")
     bool bAsyncRemesh = true;
 
+    /**
+     * Cook collision for republished chunks off the game thread. The new geometry goes to a hidden staging
+     * component without collision whose collision is cooked asynchronously; once it is cooked, the staging
+     * component replaces the chunk's component in one frame, so render and collision still change
+     * together. False cooks collision synchronously on the game thread when a chunk is published.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield")
+    bool bAsyncCollisionCooking = true;
+
     /** Upper bound on chunk snapshots started per tick; the rest stay queued (and conservative). */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "OpenBattlefield", meta = (ClampMin = "1"))
     int32 MaxChunkRebuildsPerTick = 8;
@@ -84,7 +93,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "OpenBattlefield|Terrain")
     bool ApplyCrater(FVector WorldLocation, float RadiusCm);
 
-    /** Number of chunks waiting for a mesh rebuild or being meshed. */
+    /** Number of chunks waiting for a mesh rebuild, being meshed or having their collision cooked. */
     UFUNCTION(BlueprintCallable, Category = "OpenBattlefield|Terrain")
     int32 GetPendingRebuildCount() const { return static_cast<int32>(Scheduler.PendingCount()); }
 
@@ -112,11 +121,28 @@ private:
     /** Snapshots a chunk and meshes it (on a worker or inline); false if it needed no work. */
     bool StartRemesh(const FIntVector& ChunkCoord, uint64 Ticket);
     void Publish(FOBRemeshResult& Result);
+    /** Publishes into a hidden staging component whose collision cooks asynchronously. */
+    void Stage(FOBRemeshResult&& Result);
+    /** Swaps in every staged chunk whose collision has finished cooking. */
+    void SwapCookedChunks();
+    UProceduralMeshComponent* CreateChunkMesh(const FIntVector& ChunkCoord, uint64 Ticket);
     UProceduralMeshComponent* GetOrCreateChunkMesh(const FIntVector& ChunkCoord);
     bool IsChunkVisible(const FIntVector& ChunkCoord) const;
 
     UPROPERTY(Transient)
     TMap<FIntVector, TObjectPtr<UProceduralMeshComponent>> ChunkMeshes;
+
+    /** Hidden components whose collision is cooking, one per chunk at most (a chunk stays in flight). */
+    UPROPERTY(Transient)
+    TMap<FIntVector, TObjectPtr<UProceduralMeshComponent>> StagedMeshes;
+
+    struct FStagedChunk
+    {
+        TSharedPtr<FOBRemeshResult> Result;    // kept for the synchronous fallback if cooking fails
+        const void* BodySetupBefore = nullptr; // identity only: changes when the async cook is swapped in
+        int32 Frames = 0;
+    };
+    TMap<FIntVector, FStagedChunk> StagedChunks;
 
     /** Core chunk version last published to each mesh component. */
     TMap<FIntVector, uint64> PublishedVersions;

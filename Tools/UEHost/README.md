@@ -29,7 +29,7 @@ UnrealEditor.exe <path>/OBHost.uproject /Engine/Maps/Templates/Template_Default?
 ```
 
 * `-OBVoxelCm=` 25, 12.5, 6.25 or 3.125 (power-of-two refinements of 25 cm only); `-OBGreedy=` 1 or
-  0; `-OBAsync=` 1 (mesh on worker tasks, default) or 0 (on the game thread); `-OBCollision=` 1 or 0;
+  0; `-OBAsync=` 1 (mesh on worker tasks, default) or 0 (on the game thread); `-OBCollision=` 1 or 0; `-OBAsyncCook=` 1 (cook collision on a worker, default) or 0;
   `-OBFrames=` frames to time (default 300).
 * The terrain is loaded once to warm the engine up (`first_load_s`), destroyed and loaded again;
   `load_s`, `process_mb_delta` (physical memory) and `core_world_mb` describe the second load, with
