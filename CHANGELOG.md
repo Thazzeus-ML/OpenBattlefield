@@ -40,6 +40,8 @@ All notable changes to this project are documented here. The format follows
   is reconstructed from a checkpoint snapshot plus the journal suffix. Version, last sequence, state
   hash and duplicate detection are preserved. Snapshot and journal schema 2 (schema 1 still loads);
   new `ResultCode::JournalCompacted`; benchmark E reports compaction time and sizes (#5).
+* Benchmark G, `resolution`: one physical scene at voxel sizes 25 cm / 2^k (generation, meshing,
+  apply and flush time; voxel, face and mesh memory per level). Roadmap goal: resolution.
 * `ob_snapshot` (`Tools/Snapshot`): headless PNG render of a cratered diorama through the core
   mesher with renderer-style dirty flushes; fails (exit 3) and draws chunks red if any cached mesh
   is stale. Run in CI as `ob_snapshot_smoke`.

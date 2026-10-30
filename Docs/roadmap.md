@@ -49,6 +49,18 @@ Built and run on UE 5.8.2 (Windows), see `status.md`:
 * Sparse chunk storage, density/SDF layer for smooth surfaces, per-representation benchmarks with
   identical workloads and shared correctness criteria.
 
+## Goal — Resolution: as fine as the budgets allow
+
+Push voxel size below the 25 cm baseline as far as memory, meshing and frame-time budgets allow,
+measured on the same physical scene at every level (benchmark G, `resolution`). Baseline on one
+machine: from 25 cm to 3.125 cm, voxel memory and generation grow 8x per halving (dense chunks) and
+faces 4x (surface), while edits stay in the millisecond range. Next steps, each measured against
+that baseline:
+
+* Uniform chunks (all air / all one material) stored without a voxel array.
+* Greedy meshing to cut faces and mesh memory per area.
+* In-engine frame time and memory at 25, 12.5 and 6.25 cm in `Tools/UEHost`.
+
 ## Milestone 5 — Large-session scale
 
 * 256-client load generator with realistic movement, interaction, construction and destruction

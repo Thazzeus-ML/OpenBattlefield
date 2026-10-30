@@ -2,7 +2,8 @@
 //
 // OpenBattlefield terrain benchmark harness.
 //
-//   ob_bench --workload <generation|isolated_crater|boundary_crater|artillery|reconstruction|stress|all>
+//   ob_bench --workload <name|all>   (generation, isolated_crater, boundary_crater, artillery,
+//                                     reconstruction, stress, resolution)
 //            [--preset smoke|default|large] [--iterations N] [--warmup N] [--seed S] [--chunk-size N]
 //            [--ops N] [--radius N] [--region N] [--label TEXT] [--out FILE.json] [--list]
 //
@@ -21,6 +22,8 @@
 
 #include "OpenBattlefieldCore/OpenBattlefieldCore.h"
 
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <functional>
@@ -111,6 +114,8 @@ Defaults PresetDefaults(const std::string& workload, const std::string& preset)
         return smoke   ? Defaults{1, 0, 50, 6, 64}
                : large ? Defaults{1, 0, 5000, 10, 512}
                        : Defaults{1, 0, 500, 8, 256};
+    if (workload == "resolution") // region = finest level: voxel size 25 cm / 2^region
+        return smoke ? Defaults{1, 0, 2, 0, 1} : large ? Defaults{1, 0, 8, 0, 4} : Defaults{1, 0, 8, 0, 3};
     if (workload == "stress")
         return smoke   ? Defaults{1, 0, 200, 6, 64}
                : large ? Defaults{1, 0, 50000, 10, 768}
@@ -668,6 +673,145 @@ WorkloadResult RunReconstruction(const Params& p)
     return r;
 }
 
+// --- Workload G: resolution sweep -----------------------------------------------------------------
+
+// The same physical scene at successively finer voxels: level k uses voxels 2^k times smaller than
+// 25 cm. Because the noise lattice spacing is a power of two in voxels, scaling noiseScaleLog2, the
+// amplitude and the layer depths with the voxel size reproduces the same terrain, so every level
+// measures the cost of resolution alone. The scene is a 16 m x 16 m patch with +/-2 m relief and
+// `ops` craters (at most 8) of 1.5 m radius at fixed physical positions.
+WorkloadResult RunResolution(const Params& p)
+{
+    WorkloadResult r;
+    r.name = "resolution";
+    r.params = p;
+    bool allAccepted = true;
+    for (uint32_t level = 0; level <= p.region; ++level)
+    {
+        const int64_t s = int64_t(1) << level;
+        const int64_t halfSide = 32 * s;  // 8 m in voxels
+        const int64_t halfDepth = 16 * s; // 4 m in voxels
+        const int64_t chunk = static_cast<int64_t>(p.chunkSize);
+        if (2 * halfSide < chunk)
+            continue; // the patch is smaller than one chunk at this level
+        char label[32];
+        std::snprintf(label, sizeof(label), "%gcm", 25.0 / static_cast<double>(s));
+        const std::string pre = std::string(label) + "_";
+
+        WorldConfig cfg;
+        cfg.seed = p.seed;
+        cfg.chunkSize = p.chunkSize;
+        cfg.voxelSizeMm = static_cast<uint32_t>(250 / s);
+        const int32_t hc = static_cast<int32_t>(halfSide / chunk);
+        const int32_t zc = static_cast<int32_t>(halfDepth >= chunk ? halfDepth / chunk : 1);
+        cfg.minChunk = ChunkCoord(-hc, -hc, -zc);
+        cfg.maxChunk = ChunkCoord(hc - 1, hc - 1, zc - 1);
+        cfg.maxOperationRadius = static_cast<uint32_t>(64 * s);
+        cfg.baseHeight = 0;
+        cfg.heightAmplitude = static_cast<int32_t>(8 * s);
+        cfg.noiseScaleLog2 = 6 + level;
+        cfg.topsoilDepth = static_cast<uint32_t>(s);
+        cfg.soilDepth = static_cast<uint32_t>(10 * s);
+        cfg.bedrockHeight = -64 * s;
+        TerrainWorld world(cfg);
+        if (Failed(world.Status()))
+        {
+            r.notes.push_back(pre + "invalid configuration");
+            allAccepted = false;
+            continue;
+        }
+
+        AllocDelta ad;
+        ScopedTimer tg;
+        for (int32_t z = cfg.minChunk.z; z <= cfg.maxChunk.z; ++z)
+            for (int32_t y = cfg.minChunk.y; y <= cfg.maxChunk.y; ++y)
+                for (int32_t x = cfg.minChunk.x; x <= cfg.maxChunk.x; ++x)
+                {
+                    Chunk* c = nullptr;
+                    world.EnsureChunk(ChunkCoord(x, y, z), c);
+                }
+        r.AddSeries(pre + "generate_all_ns").samplesNs.push_back(static_cast<double>(tg.ElapsedNs()));
+
+        // First meshing of every chunk, as when the area becomes visible.
+        MeshCache cache;
+        uint64_t faces = 0, meshBytes = 0;
+        ScopedTimer tm;
+        world.ForEachChunk(
+            [&](const Chunk& c)
+            {
+                faces += MeshChunk(world, c.Coord(), cache);
+                meshBytes += cache.mesh.positions.size() * sizeof(float) +
+                             cache.mesh.normals.size() * sizeof(float) + cache.mesh.vertexMaterial.size() +
+                             cache.mesh.indices.size() * sizeof(uint32_t);
+            });
+        r.AddSeries(pre + "mesh_all_ns").samplesNs.push_back(static_cast<double>(tm.ElapsedNs()));
+        uint64_t faceCacheBytes = 0;
+        for (const auto& kv : cache.faces)
+            faceCacheBytes +=
+                kv.second.faces.size() * sizeof(MeshFace) + kv.second.rowStart.size() * sizeof(uint32_t);
+
+        // Craters at fixed physical positions (metres), each followed by an incremental flush.
+        static const double kCratersM[8][2] = {{-4.5, -3.0}, {2.0, 4.0},  {0.0, 0.0},  {5.5, -5.0},
+                                               {-6.0, 5.5},  {3.5, -1.0}, {-1.5, 2.5}, {6.5, 6.5}};
+        Series& apply = r.AddSeries(pre + "apply_ns");
+        Series& flush = r.AddSeries(pre + "flush_ns");
+        std::vector<ChunkCoord> scratch;
+        uint64_t changed = 0;
+        const uint32_t craters = p.ops < 8 ? p.ops : 8;
+        for (uint32_t i = 0; i < craters; ++i)
+        {
+            TerrainOperation op;
+            op.operationId = 1 + i;
+            op.sequenceNumber = 1 + i;
+            op.worldId = cfg.worldId;
+            op.type = OperationType::SubtractSphere;
+            const double scale = 4.0 * static_cast<double>(s); // voxels per metre
+            const int64_t x = static_cast<int64_t>(std::llround(kCratersM[i][0] * scale));
+            const int64_t y = static_cast<int64_t>(std::llround(kCratersM[i][1] * scale));
+            op.center = VoxelCoord(x, y, world.Generator().SurfaceHeight(x, y));
+            op.radius = static_cast<uint32_t>(6 * s); // 1.5 m
+            ScopedTimer ta;
+            const OperationResult res = world.ApplyOperation(op);
+            apply.samplesNs.push_back(static_cast<double>(ta.ElapsedNs()));
+            allAccepted = allAccepted && res.Accepted();
+            changed += res.changedVoxels;
+            uint64_t flushedFaces = 0;
+            ScopedTimer tf;
+            FlushDirty(world, scratch, cache, &flushedFaces);
+            flush.samplesNs.push_back(static_cast<double>(tf.ElapsedNs()));
+        }
+        uint64_t facesAfter = 0;
+        for (const auto& kv : cache.faces)
+            facesAfter += kv.second.faces.size();
+
+        r.integers[pre + "voxels"] = world.LoadedChunkCount() * cfg.VoxelsPerChunk();
+        r.integers[pre + "chunks"] = world.LoadedChunkCount();
+        // Chunks holding a single material throughout: the candidates for storage without a voxel array.
+        uint64_t uniform = 0;
+        world.ForEachChunk(
+            [&](const Chunk& c)
+            {
+                const uint8_t* d = c.Data();
+                const size_t n = c.VoxelCount();
+                size_t i = 1;
+                while (i < n && d[i] == d[0])
+                    ++i;
+                uniform += i == n ? 1u : 0u;
+            });
+        r.integers[pre + "uniform_chunks"] = uniform;
+        r.integers[pre + "world_bytes"] = world.EstimateMemoryBytes();
+        r.integers[pre + "faces_initial"] = faces;
+        r.integers[pre + "faces_after_craters"] = facesAfter;
+        r.integers[pre + "mesh_bytes"] = meshBytes;
+        r.integers[pre + "face_cache_bytes"] = faceCacheBytes;
+        r.integers[pre + "changed_voxels"] = changed;
+        r.integers[pre + "allocated_bytes"] = ad.Bytes();
+        r.hashes[pre + "state_hash"] = world.ComputeStateHash();
+    }
+    r.checks["all_craters_accepted"] = allAccepted;
+    return r;
+}
+
 // --- Workload F: extended stress ------------------------------------------------------------------
 
 WorkloadResult RunStress(const Params& p)
@@ -815,8 +959,8 @@ int main(int argc, char** argv)
             if (!args.Has(kv.first))
                 args.values[kv.first] = kv.second;
     }
-    const char* kAll[] = {"generation", "isolated_crater", "boundary_crater",
-                          "artillery",  "reconstruction",  "stress"};
+    const char* kAll[] = {"generation",     "isolated_crater", "boundary_crater", "artillery",
+                          "reconstruction", "stress",          "resolution"};
 
     if (args.Has("list") || args.Has("help"))
     {
@@ -904,6 +1048,8 @@ int main(int argc, char** argv)
             r = RunReconstruction(p);
         else if (name == "stress")
             r = RunStress(p);
+        else if (name == "resolution")
+            r = RunResolution(p);
         else
         {
             std::fprintf(stderr, "unknown workload: %s\n", name.c_str());
