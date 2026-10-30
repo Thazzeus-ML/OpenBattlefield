@@ -7,6 +7,12 @@ stored per chunk in X-fastest order (`LocalIndex`). It was chosen because it is 
 correct, fully deterministic, and gives every later representation a reference to be compared
 against.
 
+A chunk whose voxels all hold one material (all `Air` above the surface, all `Rock` deep below) is
+stored as that single value with no voxel array (`Chunk::IsUniform`). The first change that breaks
+the uniformity allocates the dense array; `Compact()` frees it again and runs after generation and
+deserialization. Reads, hashes and serialized bytes are identical in both forms, so this is a storage
+detail, not a second representation.
+
 What it supports today:
 
 * Seeded procedural initialization (`ProceduralGenerator`).

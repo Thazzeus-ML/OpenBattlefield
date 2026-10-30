@@ -380,14 +380,15 @@ ResultCode TerrainWorld::BuildMeshInput(const ChunkCoord& coord, ChunkMeshInput&
     out.version = chunk->Version();
     out.padded.assign(static_cast<size_t>(p) * p * p, static_cast<uint8_t>(Material::Air));
 
-    const uint8_t* data = chunk->Data();
+    const uint8_t* data = chunk->Data(); // nullptr for a uniform chunk
+    const uint8_t uniform = static_cast<uint8_t>(chunk->UniformMaterial());
     for (uint32_t z = 0; z < n; ++z)
         for (uint32_t y = 0; y < n; ++y)
         {
             const size_t srcRow = LocalIndex(LocalCoord(0, y, z), n);
             const size_t dstRow = out.PaddedIndex(0, static_cast<int32_t>(y), static_cast<int32_t>(z));
             for (uint32_t x = 0; x < n; ++x)
-                out.padded[dstRow + x] = data[srcRow + x];
+                out.padded[dstRow + x] = data ? data[srcRow + x] : uniform;
         }
 
     // Border: fill the 26 neighbour regions (six slabs, twelve edges, eight corners; edges/corners are
@@ -421,6 +422,15 @@ ResultCode TerrainWorld::BuildMeshInput(const ChunkCoord& coord, ChunkMeshInput&
                 {
                     // The neighbour-local coordinate is the padded coordinate shifted by -d * n.
                     const uint8_t* src = neighbour->Data();
+                    if (!src)
+                    {
+                        const uint8_t m = static_cast<uint8_t>(neighbour->UniformMaterial());
+                        for (int32_t z = z0; z <= z1; ++z)
+                            for (int32_t y = y0; y <= y1; ++y)
+                                for (int32_t x = x0; x <= x1; ++x)
+                                    out.padded[out.PaddedIndex(x, y, z)] = m;
+                        continue;
+                    }
                     for (int32_t z = z0; z <= z1; ++z)
                         for (int32_t y = y0; y <= y1; ++y)
                             for (int32_t x = x0; x <= x1; ++x)

@@ -109,6 +109,7 @@ void ProceduralGenerator::GenerateChunk(Chunk& chunk) const
         }
     }
     chunk.RecountSolids();
+    chunk.Compact(); // chunks entirely above the surface never allocated; entirely solid ones free here
 }
 
 } // namespace ob

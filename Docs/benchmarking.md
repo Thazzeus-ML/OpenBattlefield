@@ -93,6 +93,7 @@ Other figures from the same run: generation ≈ 3450 chunks/s; artillery changed
   This is the first optimization target, and the first candidate for bounded parallelism.
 * Apply p95 is much higher than the median in artillery/stress because operations that touch
   unloaded chunks pay for generation (~0.3 ms per chunk) inside `ApplyOperation`.
-* Memory grows linearly with modified chunks (dense representation), about 33 KB per chunk.
+* Memory grows linearly with modified chunks (dense representation), about 33 KB per chunk. Since
+  uniform chunks hold no voxel array, only mixed chunks pay this.
 
 These observations are measurements of this baseline, not claims about the research hypothesis.

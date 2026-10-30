@@ -42,6 +42,10 @@ All notable changes to this project are documented here. The format follows
   new `ResultCode::JournalCompacted`; benchmark E reports compaction time and sizes (#5).
 * Benchmark G, `resolution`: one physical scene at voxel sizes 25 cm / 2^k (generation, meshing,
   apply and flush time; voxel, face and mesh memory per level). Roadmap goal: resolution.
+* Uniform chunks: a chunk whose voxels all hold one material is stored without a voxel array
+  (`Chunk::IsUniform`, `UniformMaterial`, `Compact`); `Data()` is `nullptr` while uniform. Content,
+  state hashes and serialized bytes are unchanged. Voxel memory in the `resolution` sweep drops from
+  67 MB to 24 MB at 3.125 cm and from 4.7 MB to 2.4 MB in `generation`.
 * `ob_snapshot` (`Tools/Snapshot`): headless PNG render of a cratered diorama through the core
   mesher with renderer-style dirty flushes; fails (exit 3) and draws chunks red if any cached mesh
   is stale. Run in CI as `ob_snapshot_smoke`.

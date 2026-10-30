@@ -57,7 +57,8 @@ machine: from 25 cm to 3.125 cm, voxel memory and generation grow 8x per halving
 faces 4x (surface), while edits stay in the millisecond range. Next steps, each measured against
 that baseline:
 
-* Uniform chunks (all air / all one material) stored without a voxel array.
+* ~~Uniform chunks (all air / all one material) stored without a voxel array.~~ Done: voxel memory
+  at 3.125 cm drops from 67 MB to 24 MB (64 % of chunks are uniform).
 * Greedy meshing to cut faces and mesh memory per area.
 * In-engine frame time and memory at 25, 12.5 and 6.25 cm in `Tools/UEHost`.
 

@@ -41,7 +41,8 @@ true because core coordinates map directly onto Unreal's left-handed axes, mirro
 
 ## Known limitations of the baseline
 
-* Dense chunks: 1 byte per voxel regardless of content.
+* Mixed chunks are dense: 1 byte per voxel. Uniform chunks (one material throughout) hold no voxel
+  array, but a chunk made uniform by edits is not compacted until it is reloaded.
 * Journal compaction (`CompactJournal`) is manual; there is no automatic checkpoint policy yet.
 * Remeshing rescans only the dirty region (`UpdateChunkFaces`), but every remesh still builds a full
   `ChunkMeshInput` snapshot and re-emits the whole chunk's `MeshData`; `AOBTerrainActor` still

@@ -786,18 +786,9 @@ WorkloadResult RunResolution(const Params& p)
 
         r.integers[pre + "voxels"] = world.LoadedChunkCount() * cfg.VoxelsPerChunk();
         r.integers[pre + "chunks"] = world.LoadedChunkCount();
-        // Chunks holding a single material throughout: the candidates for storage without a voxel array.
+        // Chunks stored as a single material without a voxel array.
         uint64_t uniform = 0;
-        world.ForEachChunk(
-            [&](const Chunk& c)
-            {
-                const uint8_t* d = c.Data();
-                const size_t n = c.VoxelCount();
-                size_t i = 1;
-                while (i < n && d[i] == d[0])
-                    ++i;
-                uniform += i == n ? 1u : 0u;
-            });
+        world.ForEachChunk([&](const Chunk& c) { uniform += c.IsUniform() ? 1u : 0u; });
         r.integers[pre + "uniform_chunks"] = uniform;
         r.integers[pre + "world_bytes"] = world.EstimateMemoryBytes();
         r.integers[pre + "faces_initial"] = faces;
