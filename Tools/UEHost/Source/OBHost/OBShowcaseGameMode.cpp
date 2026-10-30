@@ -11,6 +11,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformMisc.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "OBTerrainActor.h"
 #include "UnrealClient.h"
@@ -40,6 +42,13 @@ void AOBShowcaseGameMode::BeginPlay()
     Terrain->VisibleChunkRadius = 2;
     Terrain->VisibleChunkRadiusZ = 2; // deep enough that a 3 m crater never exits the meshed volume
     Terrain->MaxChunkRebuildsPerTick = 256;
+    // -OBAsync=0 / -OBAsyncCook=0 check the synchronous meshing and collision paths.
+    int32 Async = 1;
+    int32 AsyncCook = 1;
+    FParse::Value(FCommandLine::Get(), TEXT("OBAsync="), Async);
+    FParse::Value(FCommandLine::Get(), TEXT("OBAsyncCook="), AsyncCook);
+    Terrain->bAsyncRemesh = Async != 0;
+    Terrain->bAsyncCollisionCooking = AsyncCook != 0;
     Terrain->FinishSpawning(FTransform(kTerrainOrigin));
 
     // Isometric-ish view of the 5 x 5 chunk area (40 m across at 25 cm voxels).

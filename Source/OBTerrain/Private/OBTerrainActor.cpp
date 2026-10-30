@@ -202,8 +202,6 @@ UProceduralMeshComponent* AOBTerrainActor::GetOrCreateChunkMesh(const FIntVector
         return Existing->Get();
     }
     UProceduralMeshComponent* Mesh = CreateChunkMesh(C, 0);
-    Mesh->SetCollisionEnabled(bGenerateCollision ? ECollisionEnabled::QueryAndPhysics
-                                                 : ECollisionEnabled::NoCollision);
     ChunkMeshes.Add(C, Mesh);
     return Mesh;
 }
@@ -218,15 +216,22 @@ UProceduralMeshComponent* AOBTerrainActor::CreateChunkMesh(const FIntVector& C, 
     const FString Name = Ticket == 0 ? FString::Printf(TEXT("Chunk_%d_%d_%d"), C.X, C.Y, C.Z)
                                      : FString::Printf(TEXT("Chunk_%d_%d_%d_%llu"), C.X, C.Y, C.Z, Ticket);
     UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(this, *Name);
-    Mesh->bUseAsyncCooking = false; // collision is ready when the section is (staging turns this on)
-    Mesh->RegisterComponent();
-    Mesh->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+    // Everything is set before RegisterComponent, which builds render and physics state once, in the
+    // final configuration. A staging component (Ticket != 0) starts hidden, without collision, and cooks
+    // its collision asynchronously; collision is otherwise ready when the section is.
+    const bool bStaging = Ticket != 0;
+    Mesh->SetupAttachment(RootComponent);
     Mesh->SetRelativeLocation(FOBCoordinates::ChunkOriginCm(FOBCoordinates::ToChunkCoord(C), ChunkSize,
                                                             Subsystem->GetVoxelSizeCm()));
+    Mesh->bUseAsyncCooking = bStaging;
+    Mesh->SetVisibility(!bStaging);
+    Mesh->SetCollisionEnabled(bGenerateCollision && !bStaging ? ECollisionEnabled::QueryAndPhysics
+                                                              : ECollisionEnabled::NoCollision);
     if (TerrainMaterial)
     {
         Mesh->SetMaterial(0, TerrainMaterial);
     }
+    Mesh->RegisterComponent();
     return Mesh;
 }
 
@@ -311,9 +316,6 @@ void AOBTerrainActor::Stage(FOBRemeshResult&& InResult)
     UProceduralMeshComponent* Mesh = CreateChunkMesh(Result->Chunk, Result->Ticket);
     // Hidden and without collision until it replaces the chunk's component: nothing changes for players
     // while it cooks (Docs/rendering-collision.md, conservative while pending).
-    Mesh->SetVisibility(false);
-    Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    Mesh->bUseAsyncCooking = true;
     FStagedChunk Staged;
     Staged.BodySetupBefore = Mesh->GetBodySetup();
     const FOBMeshBuffers& Buffers = Result->Buffers;
