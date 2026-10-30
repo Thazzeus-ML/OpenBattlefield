@@ -56,6 +56,11 @@ All notable changes to this project are documented here. The format follows
   is stale. Run in CI as `ob_snapshot_smoke`.
 * `Tools/UEHost` also walks a character into craters (one on a chunk seam) and checks it ends standing
   on the crater floor; recorded in `Docs/status.md` (#2).
+* `Tools/UEHost`: `AOBResolutionGameMode` measures load time, memory, triangles, frame and GPU time and
+  crater remesh latency of the `resolution` scene at 25, 12.5 and 6.25 cm, greedy on or off
+  (`-OBVoxelCm=`, `-OBGreedy=`); results in `Docs/status.md`.
+* `FOBTerrainWorldSettings` exposes `NoiseScaleLog2`, `NoiseOctaves`, `TopsoilDepth` and `SoilDepth`, so
+  the same physical terrain can be generated at any power-of-two refinement of the voxel size.
 
 ### Fixed
 
