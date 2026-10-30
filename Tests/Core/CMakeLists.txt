@@ -7,7 +7,8 @@ set(OB_TEST_SOURCES
   TestOperations.cpp
   TestWorld.cpp
   TestReplay.cpp
-  TestMesher.cpp)
+  TestMesher.cpp
+  TestRemeshScheduler.cpp)
 
 foreach(src ${OB_TEST_SOURCES})
   get_filename_component(name ${src} NAME_WE)

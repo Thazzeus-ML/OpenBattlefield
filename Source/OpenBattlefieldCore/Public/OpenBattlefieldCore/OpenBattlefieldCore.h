@@ -14,6 +14,7 @@
 #include "OpenBattlefieldCore/ObHash.h"
 #include "OpenBattlefieldCore/ObInstrumentation.h"
 #include "OpenBattlefieldCore/ObProceduralGenerator.h"
+#include "OpenBattlefieldCore/ObRemeshScheduler.h"
 #include "OpenBattlefieldCore/ObSerialization.h"
 #include "OpenBattlefieldCore/ObTerrainOperation.h"
 #include "OpenBattlefieldCore/ObTerrainWorld.h"

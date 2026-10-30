@@ -3,14 +3,51 @@
 // STATUS: built and run on UE 5.8.2 (Windows). See Docs/status.md.
 #include "OBTerrainActor.h"
 
+#include "Containers/Queue.h"
 #include "Engine/World.h"
 #include "Materials/MaterialInterface.h"
 #include "ProceduralMeshComponent.h"
+#include "Tasks/Task.h"
 
 #include "OBMeshConversion.h"
 #include "OBTerrainWorldSubsystem.h"
 
-AOBTerrainActor::AOBTerrainActor()
+/** A finished meshing job: Unreal-ready buffers for one chunk, tagged with its scheduler ticket. */
+struct FOBRemeshResult
+{
+    FIntVector Chunk;
+    uint64 Ticket = 0;
+    uint64 Version = 0;
+    FOBMeshBuffers Buffers;
+};
+
+struct FOBRemeshCompletions
+{
+    TQueue<FOBRemeshResult, EQueueMode::Mpsc> Queue;
+};
+
+namespace
+{
+/** Pure function of the snapshot: safe on any thread (Docs/concurrency.md, rule 1). */
+void MeshSnapshot(const ob::ChunkMeshInput& Input, bool bGreedy, double VoxelSizeCm, bool bFlipWinding,
+                  FOBMeshBuffers& Out)
+{
+    ob::MeshData MeshData;
+    if (bGreedy)
+    {
+        ob::ChunkFaces Faces;
+        ob::BuildChunkFaces(Input, Faces);
+        ob::EmitGreedyChunkMesh(Faces, MeshData);
+    }
+    else
+    {
+        ob::BuildChunkMesh(Input, MeshData);
+    }
+    OBConvertChunkMesh(MeshData, VoxelSizeCm, bFlipWinding, Out);
+}
+} // namespace
+
+AOBTerrainActor::AOBTerrainActor() : Completions(MakeShared<FOBRemeshCompletions, ESPMode::ThreadSafe>())
 {
     PrimaryActorTick.bCanEverTick = true;
     RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -37,9 +74,10 @@ void AOBTerrainActor::BeginPlay()
 
 void AOBTerrainActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-    // Pending work references chunks by coordinate only, so dropping the queue is always safe.
-    PendingRebuilds.Reset();
-    PendingSet.Reset();
+    // Queued work references chunks by coordinate only, and running jobs hold only their snapshot and the
+    // old completion queue, so dropping both is always safe; their results are never published.
+    Scheduler.Reset();
+    Completions = MakeShared<FOBRemeshCompletions, ESPMode::ThreadSafe>();
     PublishedVersions.Reset();
     ChunkMeshes.Reset();
     if (UOBTerrainWorldSubsystem* Subsystem =
@@ -65,13 +103,7 @@ void AOBTerrainActor::EnqueueInitialChunks()
         {
             for (int32 X = -VisibleChunkRadius; X <= VisibleChunkRadius; ++X)
             {
-                const FIntVector C(X, Y, Z);
-                if (PendingSet.Contains(C))
-                {
-                    continue;
-                }
-                PendingSet.Add(C);
-                PendingRebuilds.Add(C);
+                Scheduler.Request(FOBCoordinates::ToChunkCoord(FIntVector(X, Y, Z)));
             }
         }
     }
@@ -108,27 +140,43 @@ void AOBTerrainActor::Tick(float DeltaSeconds)
     Subsystem->TakeDirtyChunks(Dirty);
     for (const FIntVector& C : Dirty)
     {
-        if (!IsChunkVisible(C) || PendingSet.Contains(C))
+        if (IsChunkVisible(C))
         {
-            continue;
+            Scheduler.Request(FOBCoordinates::ToChunkCoord(C));
         }
-        PendingSet.Add(C);
-        PendingRebuilds.Add(C);
     }
-    ProcessRebuildQueue();
+    // Publish first: a job completed since the last tick frees its chunk to start again this tick.
+    PublishCompletedJobs();
+    StartRemeshJobs();
+    if (!bAsyncRemesh)
+    {
+        PublishCompletedJobs();
+    }
 }
 
-void AOBTerrainActor::ProcessRebuildQueue()
+void AOBTerrainActor::StartRemeshJobs()
 {
     int32 Budget = MaxChunkRebuildsPerTick;
-    while (Budget > 0 && PendingRebuilds.Num() > 0)
+    ob::ChunkCoord Coord;
+    uint64 Ticket = 0;
+    while (Budget > 0 && Scheduler.TryStart(Coord, Ticket))
     {
-        const FIntVector C = PendingRebuilds[0];
-        PendingRebuilds.RemoveAt(0);
-        PendingSet.Remove(C);
-        if (RebuildChunk(C))
+        if (StartRemesh(FOBCoordinates::ToIntVector(Coord), Ticket))
         {
             --Budget;
+        }
+    }
+}
+
+void AOBTerrainActor::PublishCompletedJobs()
+{
+    FOBRemeshResult Result;
+    while (Completions->Queue.Dequeue(Result))
+    {
+        // Only the chunk's current job may publish: results from before EndPlay or a reset are dropped.
+        if (Scheduler.Complete(FOBCoordinates::ToChunkCoord(Result.Chunk), Result.Ticket))
+        {
+            Publish(Result);
         }
     }
 }
@@ -160,54 +208,57 @@ UProceduralMeshComponent* AOBTerrainActor::GetOrCreateChunkMesh(const FIntVector
     return Mesh;
 }
 
-bool AOBTerrainActor::RebuildChunk(const FIntVector& C)
+bool AOBTerrainActor::StartRemesh(const FIntVector& C, uint64 Ticket)
 {
     UOBTerrainWorldSubsystem* Subsystem = GetWorld()->GetSubsystem<UOBTerrainWorldSubsystem>();
     ob::TerrainWorld* Core = Subsystem ? Subsystem->GetCoreWorld() : nullptr;
-    if (!Core)
-    {
-        return false;
-    }
     const ob::ChunkCoord Coord = FOBCoordinates::ToChunkCoord(C);
     ob::Chunk* Chunk = nullptr;
-    if (ob::Failed(Core->EnsureChunk(Coord, Chunk)))
-    {
-        return false;
-    }
-    // The reference path rebuilds the whole chunk; the region only says whether anything changed.
-    const bool bDirty = Chunk->ConsumeDirtyRegion().any;
-
-    // Version-checked publication: skip if what is on screen already matches the core. A dirty
-    // region with an unchanged version means a neighbour changed this chunk's boundary faces.
-    if (const uint64* Published = PublishedVersions.Find(C))
-    {
-        if (!bDirty && *Published == Chunk->Version() && ChunkMeshes.Contains(C))
-        {
-            return false;
-        }
-    }
-
     ob::ChunkMeshInput Input;
-    if (ob::Failed(Core->BuildMeshInput(Coord, Input)))
+    bool bNeeded = Core && ob::Succeeded(Core->EnsureChunk(Coord, Chunk));
+    if (bNeeded)
     {
+        // The whole chunk is remeshed; the region only says whether anything changed.
+        const bool bDirty = Chunk->ConsumeDirtyRegion().any;
+        // Skip if what is on screen already matches the core. A dirty region with an unchanged version
+        // means a neighbour changed this chunk's boundary faces.
+        const uint64* Published = PublishedVersions.Find(C);
+        bNeeded = bDirty || !Published || *Published != Chunk->Version() || !ChunkMeshes.Contains(C);
+    }
+    // The snapshot is taken here, on the game thread, which owns the core world.
+    if (!bNeeded || ob::Failed(Core->BuildMeshInput(Coord, Input)))
+    {
+        Scheduler.Complete(Coord, Ticket); // nothing to publish; frees the chunk
         return false;
     }
-    ob::MeshData MeshData;
-    if (bGreedyMeshing)
-    {
-        ob::ChunkFaces Faces;
-        ob::BuildChunkFaces(Input, Faces);
-        ob::EmitGreedyChunkMesh(Faces, MeshData);
-    }
-    else
-    {
-        ob::BuildChunkMesh(Input, MeshData);
-    }
 
-    FOBMeshBuffers Buffers;
-    OBConvertChunkMesh(MeshData, Subsystem->GetVoxelSizeCm(), bFlipWinding, Buffers);
+    const bool bGreedy = bGreedyMeshing;
+    const bool bFlip = bFlipWinding;
+    const double VoxelSizeCm = Subsystem->GetVoxelSizeCm();
+    if (!bAsyncRemesh)
+    {
+        FOBRemeshResult Result{C, Ticket, Input.version, {}};
+        MeshSnapshot(Input, bGreedy, VoxelSizeCm, bFlip, Result.Buffers);
+        Completions->Queue.Enqueue(MoveTemp(Result));
+        return true;
+    }
+    // The job owns its snapshot and a reference to the completion queue; it never touches the actor or
+    // the core world (Docs/concurrency.md, rules 1-3).
+    UE::Tasks::Launch(UE_SOURCE_LOCATION,
+                      [Queue = Completions, Input = MoveTemp(Input), C, Ticket, bGreedy, bFlip, VoxelSizeCm]()
+                      {
+                          FOBRemeshResult Result{C, Ticket, Input.version, {}};
+                          MeshSnapshot(Input, bGreedy, VoxelSizeCm, bFlip, Result.Buffers);
+                          Queue->Queue.Enqueue(MoveTemp(Result));
+                      });
+    return true;
+}
 
-    UProceduralMeshComponent* Mesh = GetOrCreateChunkMesh(C);
+void AOBTerrainActor::Publish(FOBRemeshResult& Result)
+{
+    // Game thread only: Unreal mesh and collision state (rule 3).
+    UProceduralMeshComponent* Mesh = GetOrCreateChunkMesh(Result.Chunk);
+    FOBMeshBuffers& Buffers = Result.Buffers;
     if (Buffers.Vertices.Num() == 0)
     {
         Mesh->ClearMeshSection(0);
@@ -218,7 +269,7 @@ bool AOBTerrainActor::RebuildChunk(const FIntVector& C)
                                             Buffers.UV0, Buffers.VertexColors, Buffers.Tangents,
                                             bGenerateCollision);
     }
-    // Input.version is the version the snapshot was taken from; publishing records exactly that.
-    PublishedVersions.Add(C, Input.version);
-    return true;
+    // The version the snapshot was taken from, never the current one, so a result computed against
+    // version N is never mistaken for version N+1.
+    PublishedVersions.Add(Result.Chunk, Result.Version);
 }
