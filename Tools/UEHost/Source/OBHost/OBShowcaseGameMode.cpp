@@ -5,6 +5,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/EngineTypes.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
@@ -32,6 +33,10 @@ void AOBShowcaseGameMode::BeginPlay()
 {
     Super::BeginPlay();
     UWorld* World = GetWorld();
+    const TCHAR* WorldType = World->WorldType == EWorldType::PIE    ? TEXT("PIE")
+                             : World->WorldType == EWorldType::Game ? TEXT("Game")
+                                                                    : LexToString(World->WorldType);
+    UE_LOG(LogTemp, Display, TEXT("OBShowcase: world type %s"), WorldType);
 
     FActorSpawnParameters Params;
     Params.bDeferConstruction = true;
@@ -302,6 +307,13 @@ void AOBShowcaseGameMode::Tick(float DeltaSeconds)
         {
             UE_LOG(LogTemp, Display, TEXT("OBShowcase: done"));
             Advance(EPhase::Done);
+#if WITH_EDITOR
+            if (GetWorld()->WorldType == EWorldType::PIE)
+            {
+                UE_LOG(LogTemp, Display, TEXT("OBShowcase: PIE session left to its owner"));
+                return;
+            }
+#endif
             FPlatformMisc::RequestExit(false, TEXT("OBShowcase finished"));
         }
         break;

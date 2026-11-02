@@ -75,6 +75,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+* `Tools/UEHost` leaves PIE shutdown to the editor so the showcase can run under the
+  `Project.Maps.PIE` automation test (#2).
 * First in-engine build (UE 5.8.2): the `.generated.h` include in `OBTerrainTypes.h` is last again
   (UHT); the core export macro supplies `DLLEXPORT`/`DLLIMPORT`; `bFlipWinding` defaults to true
   (the terrain rendered inside out) (#2).

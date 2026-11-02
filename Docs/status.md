@@ -108,13 +108,14 @@ The editor binary was run headless with `-game -nullrhi` (2026-10-31).
 | Server target (`OBHostServer`, Development) | Builds on UE 5.4–5.7; no compiler warnings in plugin or host sources |
 | `ApplyCrater` collision | Complex-collision line traces at each centre drop by 275 cm for a 300 cm radius crater (3/3) |
 | Walking into a crater with a character | Both end on ground, 16–17 cm from the centre, feet about 2 cm above the traced floor, never lower (2/2 on every version in each of two runs) |
+| PIE (headless, `-nullrhi`) | On UE 5.4–5.7, checks that the showcase runs in the editor's PIE world, terrain meshing completes, crater collision is 3/3, walks are 2/2 and the `Project.Maps.PIE` automation test passes |
 
 The 5.5 headless run used `-ddc=InstalledNoZenLocalFallback` because the default local Zen DDC
 stalled at frame 0 waiting on the Zen server in that container.
 
-Not run: rendering and winding visuals, screenshots (NullRHI renders nothing), PIE, the resolution
+Not run: rendering and winding visuals, screenshots (NullRHI renders nothing), the resolution
 and timing harness (GPU and frame timing), running the dedicated server (it needs cooked content),
-macOS, and Windows on UE 5.4–5.7.
+macOS, and Windows on UE 5.4–5.7. Epic publishes engine development images for Linux only.
 
 ## Deferred features (by design)
 

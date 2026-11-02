@@ -20,6 +20,9 @@ not part of the plugin; UnrealBuildTool only compiles it when you open or build 
    `-nullrhi` renders nothing, so this checks collision and the walks, not the visuals; the session
    quits by itself once the checks finish, but not when the terrain never finishes meshing, hence the
    `timeout`.
+   PIE (headless) on Linux: `timeout 1800 <Engine>/Binaries/Linux/UnrealEditor <path>/OBHost.uproject -nullrhi -unattended -nosound -nosplash -log -stdout -ExecCmds="Automation RunTests Project.Maps.PIE; Quit"`.
+   This runs the showcase in the editor's PIE world; the test ends the session after `PIETestDuration`.
+   For UE 5.5, add `-ddc=InstalledNoZenLocalFallback` as above.
 
 `AOBShowcaseGameMode` spawns an `AOBTerrainActor` over the template map, waits until every chunk is
 meshed, screenshots it, applies three craters through `ApplyCrater` (inside a chunk, on a chunk face,
@@ -27,7 +30,7 @@ on a chunk corner), checks with complex-collision line traces that the surface d
 crater radius, and screenshots again. It then walks two default `ACharacter` capsules (AI-controlled,
 with a cylinder for visibility) into two of the craters, one centred on a chunk face so the walk ends on
 a chunk seam, checks that each ends standing on the crater floor without ever dropping below it,
-takes a close-up and quits. Results are logged with the prefix `OBShowcase:`;
+takes a close-up and quits in a `-game` session. Results are logged with the prefix `OBShowcase:`;
 screenshots land in `Saved/Showcase/`.
 
 ## Resolution measurement
