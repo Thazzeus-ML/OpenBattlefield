@@ -34,7 +34,7 @@ Built and run on UE 5.8.2 (Windows), see `status.md`:
 
 * Dirty-region-limited remeshing, greedy meshing, border cache for `BuildMeshInput`.
 * ~~Off-game-thread remeshing with version-checked publication (`OBScheduling` seed).~~ Done in the
-  Unreal adapter (`ob::RemeshScheduler`); collision cooking is still on the game thread.
+  Unreal adapter (`ob::RemeshScheduler`), collision cooking included (`bAsyncCollisionCooking`).
 * Target: flush cost in the `artillery` workload (repeated overlapping impacts) scales with changed
   voxels, not with chunk count. Measured against
   the Milestone 0 baseline on the same machine.
@@ -70,8 +70,12 @@ that baseline:
   sweep adding 3.125 cm.~~ Done (`ob::RemeshScheduler`, `bAsyncRemesh`): meshing leaves the crater
   frame; 3.125 cm over 32 m loads in about 10 s and renders at 14 ms per frame. The crater frame is now
   synchronous collision cooking: about 17 ms at 6.25 cm and 100 ms at 3.125 cm.
-* Next: cook collision off the game thread and publish render and collision together, then fewer
-  chunk components (larger render chunks or merged sections) for the 14 ms steady frame at 3.125 cm.
+* ~~Cook collision off the game thread and publish render and collision together.~~ Done
+  (`bAsyncCollisionCooking`): a crater costs about one normal frame from 25 to 6.25 cm (4-9 ms). At
+  3.125 cm it is 47-50 ms, about 1 ms of physics body work per chunk on the game thread, and a crater
+  touches 36 chunks of 1 m.
+* Next: fewer, larger chunks at fine voxel sizes (fewer components per crater and in the 14 ms steady
+  frame at 3.125 cm).
 
 ## Milestone 5 — Large-session scale
 

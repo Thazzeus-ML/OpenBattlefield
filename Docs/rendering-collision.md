@@ -54,9 +54,14 @@ Gaps in the current implementation, stated plainly:
 
 * Collision uses the render mesh. Collision generation independent of render detail (coarser
   collision, finer render) is not implemented.
-* Incremental collision reconstruction is not implemented; the whole chunk section is recooked
-  synchronously on the game thread when it is published (meshing itself runs on a worker).
-  `bUseAsyncCooking` is deliberately off so the policy above holds.
+* Incremental collision reconstruction is not implemented; the whole chunk section is recooked.
+  The cook runs on a worker (`bAsyncCollisionCooking`): ProcMesh's own `bUseAsyncCooking` would show
+  the new render section at once and swap collision in frames later, which breaks rule 1, so the new
+  geometry is cooked in a hidden staging component without collision and replaces the chunk's
+  component, render and collision together, once it is cooked.
+* Every republished chunk still creates one physics body and destroys another on the game thread
+  (about 1 ms per chunk in UE 5.8), all in the frame that swaps them in, so a crater's cost there
+  grows with the number of chunks it touches.
 * In-engine measurements are in `status.md` (resolution in engine).
 
 ## Future work

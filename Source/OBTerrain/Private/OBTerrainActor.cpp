@@ -7,6 +7,7 @@
 #include "Engine/World.h"
 #include "HAL/PlatformTime.h"
 #include "Materials/MaterialInterface.h"
+#include "PhysicsEngine/BodySetup.h"
 #include "ProceduralMeshComponent.h"
 #include "Tasks/Task.h"
 
@@ -79,6 +80,8 @@ void AOBTerrainActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
     // old completion queue, so dropping both is always safe; their results are never published.
     Scheduler.Reset();
     Completions = MakeShared<FOBRemeshCompletions, ESPMode::ThreadSafe>();
+    StagedChunks.Reset();
+    StagedMeshes.Reset();
     PublishedVersions.Reset();
     ChunkMeshes.Reset();
     if (UOBTerrainWorldSubsystem* Subsystem =
@@ -153,6 +156,7 @@ void AOBTerrainActor::Tick(float DeltaSeconds)
     {
         PublishCompletedJobs();
     }
+    SwapCookedChunks();
 }
 
 void AOBTerrainActor::StartRemeshJobs()
@@ -175,10 +179,19 @@ void AOBTerrainActor::PublishCompletedJobs()
     while (Completions->Queue.Dequeue(Result))
     {
         // Only the chunk's current job may publish: results from before EndPlay or a reset are dropped.
-        if (Scheduler.Complete(FOBCoordinates::ToChunkCoord(Result.Chunk), Result.Ticket))
+        const ob::ChunkCoord Coord = FOBCoordinates::ToChunkCoord(Result.Chunk);
+        if (!Scheduler.IsCurrent(Coord, Result.Ticket))
         {
-            Publish(Result);
+            continue;
         }
+        // Empty geometry needs no cook: clearing removes render and collision together.
+        if (bGenerateCollision && bAsyncCollisionCooking && Result.Buffers.Vertices.Num() > 0)
+        {
+            Stage(MoveTemp(Result)); // the chunk stays in flight until its collision is cooked
+            continue;
+        }
+        Scheduler.Complete(Coord, Result.Ticket);
+        Publish(Result);
     }
 }
 
@@ -188,24 +201,37 @@ UProceduralMeshComponent* AOBTerrainActor::GetOrCreateChunkMesh(const FIntVector
     {
         return Existing->Get();
     }
+    UProceduralMeshComponent* Mesh = CreateChunkMesh(C, 0);
+    ChunkMeshes.Add(C, Mesh);
+    return Mesh;
+}
+
+UProceduralMeshComponent* AOBTerrainActor::CreateChunkMesh(const FIntVector& C, uint64 Ticket)
+{
     UOBTerrainWorldSubsystem* Subsystem = GetWorld()->GetSubsystem<UOBTerrainWorldSubsystem>();
     const uint32_t ChunkSize = Subsystem->GetSettings().ChunkSize > 0
                                    ? static_cast<uint32_t>(Subsystem->GetSettings().ChunkSize)
                                    : 32u;
-    UProceduralMeshComponent* Mesh =
-        NewObject<UProceduralMeshComponent>(this, *FString::Printf(TEXT("Chunk_%d_%d_%d"), C.X, C.Y, C.Z));
-    Mesh->RegisterComponent();
-    Mesh->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+    // A staging component coexists with the chunk's current one, so the ticket keeps names unique.
+    const FString Name = Ticket == 0 ? FString::Printf(TEXT("Chunk_%d_%d_%d"), C.X, C.Y, C.Z)
+                                     : FString::Printf(TEXT("Chunk_%d_%d_%d_%llu"), C.X, C.Y, C.Z, Ticket);
+    UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(this, *Name);
+    // Everything is set before RegisterComponent, which builds render and physics state once, in the
+    // final configuration. A staging component (Ticket != 0) starts hidden, without collision, and cooks
+    // its collision asynchronously; collision is otherwise ready when the section is.
+    const bool bStaging = Ticket != 0;
+    Mesh->SetupAttachment(RootComponent);
     Mesh->SetRelativeLocation(FOBCoordinates::ChunkOriginCm(FOBCoordinates::ToChunkCoord(C), ChunkSize,
                                                             Subsystem->GetVoxelSizeCm()));
-    Mesh->bUseAsyncCooking = false; // synchronous reference path: collision is ready when the section is
-    Mesh->SetCollisionEnabled(bGenerateCollision ? ECollisionEnabled::QueryAndPhysics
-                                                 : ECollisionEnabled::NoCollision);
+    Mesh->bUseAsyncCooking = bStaging;
+    Mesh->SetVisibility(!bStaging);
+    Mesh->SetCollisionEnabled(bGenerateCollision && !bStaging ? ECollisionEnabled::QueryAndPhysics
+                                                              : ECollisionEnabled::NoCollision);
     if (TerrainMaterial)
     {
         Mesh->SetMaterial(0, TerrainMaterial);
     }
-    ChunkMeshes.Add(C, Mesh);
+    Mesh->RegisterComponent();
     return Mesh;
 }
 
@@ -281,4 +307,74 @@ void AOBTerrainActor::Publish(FOBRemeshResult& Result)
     PublishedVersions.Add(Result.Chunk, Result.Version);
     ++PublishedChunkCount;
     PublishSeconds += FPlatformTime::Seconds() - PublishStart;
+}
+
+void AOBTerrainActor::Stage(FOBRemeshResult&& InResult)
+{
+    const double StageStart = FPlatformTime::Seconds();
+    TSharedPtr<FOBRemeshResult> Result = MakeShared<FOBRemeshResult>(MoveTemp(InResult));
+    UProceduralMeshComponent* Mesh = CreateChunkMesh(Result->Chunk, Result->Ticket);
+    // Hidden and without collision until it replaces the chunk's component: nothing changes for players
+    // while it cooks (Docs/rendering-collision.md, conservative while pending).
+    FStagedChunk Staged;
+    Staged.BodySetupBefore = Mesh->GetBodySetup();
+    const FOBMeshBuffers& Buffers = Result->Buffers;
+    // CreateMeshSection always updates collision; with bUseAsyncCooking the cook runs on a worker and the
+    // component swaps in the cooked body setup when it finishes.
+    Mesh->CreateMeshSection_LinearColor(0, Buffers.Vertices, Buffers.Triangles, Buffers.Normals, Buffers.UV0,
+                                        Buffers.VertexColors, Buffers.Tangents, true);
+    const FIntVector C = Result->Chunk;
+    Staged.Result = MoveTemp(Result);
+    StagedMeshes.Add(C, Mesh);
+    StagedChunks.Add(C, MoveTemp(Staged));
+    PublishSeconds += FPlatformTime::Seconds() - StageStart;
+}
+
+void AOBTerrainActor::SwapCookedChunks()
+{
+    constexpr int32 MaxCookFrames = 600;
+    TArray<FIntVector> Ready;
+    for (TPair<FIntVector, FStagedChunk>& Pair : StagedChunks)
+    {
+        UProceduralMeshComponent* Mesh = StagedMeshes.FindRef(Pair.Key);
+        if (Mesh &&
+            (Mesh->GetBodySetup() != Pair.Value.BodySetupBefore || ++Pair.Value.Frames > MaxCookFrames))
+        {
+            Ready.Add(Pair.Key);
+        }
+    }
+    for (const FIntVector& C : Ready)
+    {
+        const double SwapStart = FPlatformTime::Seconds();
+        FStagedChunk Staged = StagedChunks.FindAndRemoveChecked(C);
+        UProceduralMeshComponent* Mesh = StagedMeshes.FindAndRemoveChecked(C);
+        const FOBRemeshResult& Result = *Staged.Result;
+        Mesh->bUseAsyncCooking = false;
+        if (Mesh->GetBodySetup() == Staged.BodySetupBefore)
+        {
+            // The async cook failed or never finished: cook synchronously rather than publish geometry
+            // without collision.
+            UE_LOG(LogOBTerrain, Warning,
+                   TEXT("Chunk (%d, %d, %d): async collision cook did not finish, cooking now"), C.X, C.Y,
+                   C.Z);
+            const FOBMeshBuffers& Buffers = Result.Buffers;
+            Mesh->CreateMeshSection_LinearColor(0, Buffers.Vertices, Buffers.Triangles, Buffers.Normals,
+                                                Buffers.UV0, Buffers.VertexColors, Buffers.Tangents, true);
+        }
+        // Render and collision of the new geometry appear, and the old ones disappear, in this frame.
+        Mesh->SetVisibility(true);
+        Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        if (TObjectPtr<UProceduralMeshComponent>* Old = ChunkMeshes.Find(C))
+        {
+            if (Old->Get())
+            {
+                Old->Get()->DestroyComponent();
+            }
+        }
+        ChunkMeshes.Add(C, Mesh);
+        PublishedVersions.Add(C, Result.Version);
+        ++PublishedChunkCount;
+        Scheduler.Complete(FOBCoordinates::ToChunkCoord(C), Result.Ticket);
+        PublishSeconds += FPlatformTime::Seconds() - SwapStart;
+    }
 }
